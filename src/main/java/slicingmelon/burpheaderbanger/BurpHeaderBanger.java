@@ -863,7 +863,10 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         // Add extra headers as well, without payloads
         api.logging().logToOutput("Adding " + extraHeaders.size() + " extra headers to XSS request: " + extraHeaders);
         
-        // DIRECTLY add extra headers to avoid complex logic
+        // DIRECTLY add extra headers using the Burp API method
+        HttpRequest workingRequest = request.withUpdatedHeaders(modifiedHeaders);
+        
+        // Add extra headers one by one using the proper API method
         for (String extraHeader : extraHeaders) {
             api.logging().logToOutput("DEBUG XSS: Processing extra header: '" + extraHeader + "'");
             String[] parts = extraHeader.split(":", 2);
@@ -873,36 +876,32 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                 
                 // Remove existing header if overwrite is enabled
                 if (overwriteExtraHeaders) {
-                    modifiedHeaders.removeIf(h -> h.name().equalsIgnoreCase(headerName));
+                    workingRequest = workingRequest.withRemovedHeader(headerName);
                     api.logging().logToOutput("DEBUG XSS: Removed existing header: " + headerName);
                 } else {
                     // Check if header already exists (only if overwrite is disabled)
-                    boolean exists = modifiedHeaders.stream()
-                            .anyMatch(h -> h.name().equalsIgnoreCase(headerName));
-                    if (exists) {
+                    if (workingRequest.hasHeader(headerName)) {
                         api.logging().logToOutput("DEBUG XSS: Skipping extra header " + headerName + " because it already exists and overwrite is disabled");
                         continue;
                     }
                 }
                 
-                // Add the extra header
-                modifiedHeaders.add(HttpHeader.httpHeader(headerName, headerValue));
+                // Add the extra header using the proper API method
+                workingRequest = workingRequest.withAddedHeader(headerName, headerValue);
                 api.logging().logToOutput("DEBUG XSS: Added extra header: " + headerName + " = " + headerValue);
-                api.logging().logToOutput("DEBUG XSS: Total headers after adding extra header: " + modifiedHeaders.size());
+                api.logging().logToOutput("DEBUG XSS: Total headers after adding extra header: " + workingRequest.headers().size());
             } else {
                 api.logging().logToOutput("DEBUG XSS: Skipping malformed extra header: " + extraHeader);
             }
         }
         
-        HttpRequest finalRequest = request.withUpdatedHeaders(modifiedHeaders);
-        
         // DEBUG: Show all headers in the final request
-        api.logging().logToOutput("DEBUG XSS: Final request headers (" + finalRequest.headers().size() + " total):");
-        for (HttpHeader header : finalRequest.headers()) {
+        api.logging().logToOutput("DEBUG XSS: Final request headers (" + workingRequest.headers().size() + " total):");
+        for (HttpHeader header : workingRequest.headers()) {
             api.logging().logToOutput("  " + header.name() + ": " + header.value());
         }
         
-        return finalRequest;
+        return workingRequest;
     }
     
     private HttpRequest injectSqlInjectionPayloads(HttpRequest request) {
@@ -937,8 +936,9 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         // NOTE: Don't add extra headers to headersToAdd - we'll handle them separately
         
         List<HttpHeader> newHeaders = addOrReplaceHeaders(baseHeaders, headersToAdd);
+        HttpRequest workingRequest = request.withUpdatedHeaders(newHeaders);
         
-        // DIRECTLY add extra headers to the final headers list
+        // Add extra headers using the proper API method
         for (String extraHeader : extraHeaders) {
             api.logging().logToOutput("DEBUG SQLi: Processing extra header: '" + extraHeader + "'");
             String[] parts = extraHeader.split(":", 2);
@@ -948,19 +948,31 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                 
                 // Remove existing header if overwrite is enabled
                 if (overwriteExtraHeaders) {
-                    newHeaders.removeIf(h -> h.name().equalsIgnoreCase(headerName));
+                    workingRequest = workingRequest.withRemovedHeader(headerName);
                     api.logging().logToOutput("DEBUG SQLi: Removed existing header: " + headerName);
+                } else {
+                    // Check if header already exists (only if overwrite is disabled)
+                    if (workingRequest.hasHeader(headerName)) {
+                        api.logging().logToOutput("DEBUG SQLi: Skipping extra header " + headerName + " because it already exists and overwrite is disabled");
+                        continue;
+                    }
                 }
                 
-                // Add the extra header
-                newHeaders.add(HttpHeader.httpHeader(headerName, headerValue));
+                // Add the extra header using the proper API method
+                workingRequest = workingRequest.withAddedHeader(headerName, headerValue);
                 api.logging().logToOutput("DEBUG SQLi: Added extra header: " + headerName + " = " + headerValue);
             } else {
                 api.logging().logToOutput("DEBUG SQLi: Skipping malformed extra header: " + extraHeader);
             }
         }
         
-        return request.withUpdatedHeaders(newHeaders);
+        // DEBUG: Show all headers in the final request
+        api.logging().logToOutput("DEBUG SQLi: Final request headers (" + workingRequest.headers().size() + " total):");
+        for (HttpHeader header : workingRequest.headers()) {
+            api.logging().logToOutput("  " + header.name() + ": " + header.value());
+        }
+        
+        return workingRequest;
     }
 
     private void processResponseForSqli(InterceptedResponse interceptedResponse) {
@@ -1085,18 +1097,35 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         api.logging().logToOutput("  • Expected Sleep Time: " + sqliSleepTime + " seconds");
         api.logging().logToOutput("Detected: " + new java.util.Date());
         
-        // Create proper audit issue
+        // Create proper audit issue using the original request with injected headers
         try {
-            createAuditIssue(
+            // Use the initiating request that contains the SQL injection payloads
+            HttpRequestResponse evidenceRequestResponse = HttpRequestResponse.httpRequestResponse(
+                interceptedResponse.initiatingRequest(),
+                interceptedResponse
+            );
+            
+            AuditIssue issue = AuditIssue.auditIssue(
                 "Time-based SQL Injection via Headers",
                 "Time-based SQL injection vulnerability detected through header injection. The application "
                 + "responded with a delay of " + responseTime + " ms, which suggests that the injected "
                 + "time-based SQL payload was executed. This indicates that user input is being directly "
                 + "incorporated into SQL queries without proper sanitization.",
+                "Fix this vulnerability by properly validating and sanitizing all user input, especially in HTTP headers. "
+                + "Implement proper input validation and use parameterized queries to prevent SQL injection attacks.",
                 interceptedResponse.request().url(),
                 AuditIssueSeverity.HIGH,
-                AuditIssueConfidence.FIRM
+                AuditIssueConfidence.FIRM,
+                "This vulnerability allows attackers to execute arbitrary SQL commands on the database server, "
+                + "potentially leading to data theft, data manipulation, or complete system compromise.",
+                "The application processes user-controlled header values without proper validation or sanitization, "
+                + "allowing SQL injection attacks through HTTP header injection.",
+                AuditIssueSeverity.HIGH,
+                evidenceRequestResponse
             );
+            
+            api.siteMap().add(issue);
+            api.logging().logToOutput("Audit issue created successfully: Time-based SQL Injection via Headers");
         } catch (Exception e) {
             api.logging().logToError("Failed to create SQL injection audit issue: " + e.getMessage());
         }
@@ -1113,18 +1142,29 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         api.logging().logToOutput("  • Expected Sleep Time: " + sqliSleepTime + " seconds");
         api.logging().logToOutput("Detected: " + new java.util.Date());
         
-        // Create proper audit issue
+        // Create proper audit issue using the original request with injected headers
         try {
-            createAuditIssue(
+            AuditIssue issue = AuditIssue.auditIssue(
                 "Time-based SQL Injection via Sensitive Headers",
                 "Time-based SQL injection vulnerability detected through sensitive header injection. The application "
                 + "responded with a delay of " + responseTime + " ms, which suggests that the injected "
                 + "time-based SQL payload was executed. This indicates that user input from sensitive headers is being "
                 + "directly incorporated into SQL queries without proper sanitization.",
+                "Fix this vulnerability by properly validating and sanitizing all user input, especially in HTTP headers. "
+                + "Implement proper input validation and use parameterized queries to prevent SQL injection attacks.",
                 response.request().url(),
                 AuditIssueSeverity.HIGH,
-                AuditIssueConfidence.FIRM
+                AuditIssueConfidence.FIRM,
+                "This vulnerability allows attackers to execute arbitrary SQL commands on the database server, "
+                + "potentially leading to data theft, data manipulation, or complete system compromise.",
+                "The application processes user-controlled header values without proper validation or sanitization, "
+                + "allowing SQL injection attacks through HTTP header injection.",
+                AuditIssueSeverity.HIGH,
+                response
             );
+            
+            api.siteMap().add(issue);
+            api.logging().logToOutput("Audit issue created successfully: Time-based SQL Injection via Sensitive Headers");
         } catch (Exception e) {
             api.logging().logToError("Failed to create SQL injection audit issue: " + e.getMessage());
         }
