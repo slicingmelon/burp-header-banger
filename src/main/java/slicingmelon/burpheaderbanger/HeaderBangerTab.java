@@ -30,8 +30,8 @@ public class HeaderBangerTab {
     private JTextField newSensitiveHeaderField;
     private JTextField newHostField;
     private JTextField newExtraHeaderField;
-    private JTextField sqliPayloadField;
-    private JTextField bxssPayloadField;
+    private JTextArea sqliPayloadField;
+    private JTextArea bxssPayloadField;
 
     public HeaderBangerTab(BurpHeaderBanger extension, MontoyaApi api) {
         this.extension = extension;
@@ -118,6 +118,7 @@ public class HeaderBangerTab {
 
     private JPanel createHeadersAndPayloadsPanel() {
         JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         
         // Top panel with checkbox
         JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
@@ -129,184 +130,267 @@ public class HeaderBangerTab {
         });
         topPanel.add(addOnlyIfNotExistsCheckBox);
         
-        // Headers and payloads grid
-        JPanel gridPanel = new JPanel(new GridLayout(1, 5));
+        // Main content panel
+        JPanel mainPanel = new JPanel(new BorderLayout());
+        
+        // Headers section (top)
+        JPanel headersSection = new JPanel(new GridLayout(1, 3, 10, 0));
+        headersSection.setBorder(BorderFactory.createTitledBorder("Headers Configuration"));
         
         // Headers panel
         JPanel headersPanel = createHeadersPanel();
-        gridPanel.add(headersPanel);
+        headersPanel.setBorder(BorderFactory.createTitledBorder("Headers"));
+        headersSection.add(headersPanel);
         
         // Sensitive headers panel
         JPanel sensitiveHeadersPanel = createSensitiveHeadersPanel();
-        gridPanel.add(sensitiveHeadersPanel);
+        sensitiveHeadersPanel.setBorder(BorderFactory.createTitledBorder("Sensitive Headers"));
+        headersSection.add(sensitiveHeadersPanel);
+        
+        // Extra headers panel
+        JPanel extraHeadersPanel = createExtraHeadersPanel();
+        extraHeadersPanel.setBorder(BorderFactory.createTitledBorder("Extra Headers"));
+        headersSection.add(extraHeadersPanel);
+        
+        // Payloads section (bottom)
+        JPanel payloadsSection = new JPanel(new GridLayout(1, 2, 20, 0));
+        payloadsSection.setBorder(BorderFactory.createTitledBorder("Payloads Configuration"));
         
         // SQLi payload panel
         JPanel sqliPanel = createSqliPayloadPanel();
-        gridPanel.add(sqliPanel);
+        sqliPanel.setBorder(BorderFactory.createTitledBorder("SQL Injection Payload"));
+        payloadsSection.add(sqliPanel);
         
         // XSS payload panel
         JPanel xssPanel = createXssPayloadPanel();
-        gridPanel.add(xssPanel);
+        xssPanel.setBorder(BorderFactory.createTitledBorder("Blind XSS Payload"));
+        payloadsSection.add(xssPanel);
         
-        // Extra headers panel (last)
-        JPanel extraHeadersPanel = createExtraHeadersPanel();
-        gridPanel.add(extraHeadersPanel);
+        // Add sections to main panel
+        mainPanel.add(headersSection, BorderLayout.CENTER);
+        mainPanel.add(payloadsSection, BorderLayout.SOUTH);
         
+        // Add everything to the main panel
         panel.add(topPanel, BorderLayout.NORTH);
-        panel.add(gridPanel, BorderLayout.CENTER);
+        panel.add(mainPanel, BorderLayout.CENTER);
         
         return panel;
     }
 
     private JPanel createHeadersPanel() {
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        
-        panel.add(new JLabel("Headers:"));
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
         
         headersListModel = new DefaultListModel<>();
         extension.getHeaders().forEach(headersListModel::addElement);
         headersList = new JList<>(headersListModel);
-        panel.add(new JScrollPane(headersList));
+        headersList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        JScrollPane scrollPane = new JScrollPane(headersList);
+        scrollPane.setPreferredSize(new Dimension(200, 150));
+        panel.add(scrollPane, BorderLayout.CENTER);
         
-        // Controls
-        JPanel controlsPanel = new JPanel(new FlowLayout());
-        newHeaderField = new JTextField(15);
-        controlsPanel.add(newHeaderField);
+        // Input panel
+        JPanel inputPanel = new JPanel(new BorderLayout());
+        newHeaderField = new JTextField();
+        newHeaderField.addActionListener(e -> addHeader()); // Allow Enter key to add
+        inputPanel.add(new JLabel("New header:"), BorderLayout.WEST);
+        inputPanel.add(newHeaderField, BorderLayout.CENTER);
+        
+        // Button panel
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 0));
         
         JButton addButton = new JButton("Add");
         addButton.addActionListener(e -> addHeader());
-        controlsPanel.add(addButton);
+        buttonPanel.add(addButton);
         
         JButton deleteButton = new JButton("Delete");
         deleteButton.addActionListener(e -> deleteHeader());
-        controlsPanel.add(deleteButton);
+        buttonPanel.add(deleteButton);
         
         JButton clearButton = new JButton("Clear");
         clearButton.addActionListener(e -> clearHeaders());
-        controlsPanel.add(clearButton);
+        buttonPanel.add(clearButton);
         
         JButton defaultButton = new JButton("Default");
         defaultButton.addActionListener(e -> setDefaultHeaders());
-        controlsPanel.add(defaultButton);
+        buttonPanel.add(defaultButton);
         
-        panel.add(controlsPanel);
+        // Controls panel
+        JPanel controlsPanel = new JPanel(new BorderLayout());
+        controlsPanel.add(inputPanel, BorderLayout.NORTH);
+        controlsPanel.add(buttonPanel, BorderLayout.SOUTH);
+        
+        panel.add(controlsPanel, BorderLayout.SOUTH);
         
         return panel;
     }
 
     private JPanel createSensitiveHeadersPanel() {
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        
-        panel.add(new JLabel("Sensitive Headers:"));
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
         
         sensitiveHeadersListModel = new DefaultListModel<>();
         extension.getSensitiveHeaders().forEach(sensitiveHeadersListModel::addElement);
         sensitiveHeadersList = new JList<>(sensitiveHeadersListModel);
-        panel.add(new JScrollPane(sensitiveHeadersList));
+        sensitiveHeadersList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        JScrollPane scrollPane = new JScrollPane(sensitiveHeadersList);
+        scrollPane.setPreferredSize(new Dimension(200, 150));
+        panel.add(scrollPane, BorderLayout.CENTER);
         
-        // Controls
-        JPanel controlsPanel = new JPanel(new FlowLayout());
-        newSensitiveHeaderField = new JTextField(15);
-        controlsPanel.add(newSensitiveHeaderField);
+        // Input panel
+        JPanel inputPanel = new JPanel(new BorderLayout());
+        newSensitiveHeaderField = new JTextField();
+        newSensitiveHeaderField.addActionListener(e -> addSensitiveHeader()); // Allow Enter key to add
+        inputPanel.add(new JLabel("New header:"), BorderLayout.WEST);
+        inputPanel.add(newSensitiveHeaderField, BorderLayout.CENTER);
+        
+        // Button panel
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 0));
         
         JButton addButton = new JButton("Add");
         addButton.addActionListener(e -> addSensitiveHeader());
-        controlsPanel.add(addButton);
+        buttonPanel.add(addButton);
         
         JButton deleteButton = new JButton("Delete");
         deleteButton.addActionListener(e -> deleteSensitiveHeader());
-        controlsPanel.add(deleteButton);
+        buttonPanel.add(deleteButton);
         
         JButton clearButton = new JButton("Clear");
         clearButton.addActionListener(e -> clearSensitiveHeaders());
-        controlsPanel.add(clearButton);
+        buttonPanel.add(clearButton);
         
         JButton defaultButton = new JButton("Default");
         defaultButton.addActionListener(e -> setDefaultSensitiveHeaders());
-        controlsPanel.add(defaultButton);
+        buttonPanel.add(defaultButton);
         
-        panel.add(controlsPanel);
+        // Controls panel
+        JPanel controlsPanel = new JPanel(new BorderLayout());
+        controlsPanel.add(inputPanel, BorderLayout.NORTH);
+        controlsPanel.add(buttonPanel, BorderLayout.SOUTH);
+        
+        panel.add(controlsPanel, BorderLayout.SOUTH);
         
         return panel;
     }
 
     private JPanel createSqliPayloadPanel() {
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         
-        panel.add(new JLabel("SQL Injection Payload:"));
+        // Info panel
+        JPanel infoPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        JLabel infoLabel = new JLabel("Configure the SQL injection payload used for testing:");
+        infoLabel.setFont(infoLabel.getFont().deriveFont(Font.PLAIN, 12f));
+        infoPanel.add(infoLabel);
         
-        sqliPayloadField = new JTextField(extension.getSqliPayload());
-        panel.add(sqliPayloadField);
+        // Payload text area
+        sqliPayloadField = new JTextArea(extension.getSqliPayload(), 4, 30);
+        sqliPayloadField.setLineWrap(true);
+        sqliPayloadField.setWrapStyleWord(true);
+        sqliPayloadField.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        sqliPayloadField.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
+        JScrollPane scrollPane = new JScrollPane(sqliPayloadField);
+        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
+        scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
         
-        JPanel controlsPanel = new JPanel(new FlowLayout());
-        JButton saveButton = new JButton("Save");
+        // Button panel
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 5));
+        
+        JButton saveButton = new JButton("Save Payload");
         saveButton.addActionListener(e -> saveSqliPayload());
-        controlsPanel.add(saveButton);
+        buttonPanel.add(saveButton);
         
-        JButton defaultButton = new JButton("Default");
+        JButton defaultButton = new JButton("Reset to Default");
         defaultButton.addActionListener(e -> setDefaultSqliPayload());
-        controlsPanel.add(defaultButton);
+        buttonPanel.add(defaultButton);
         
-        panel.add(controlsPanel);
+        // Assembly
+        panel.add(infoPanel, BorderLayout.NORTH);
+        panel.add(scrollPane, BorderLayout.CENTER);
+        panel.add(buttonPanel, BorderLayout.SOUTH);
         
         return panel;
     }
 
     private JPanel createXssPayloadPanel() {
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         
-        panel.add(new JLabel("Blind XSS Payload:"));
+        // Info panel
+        JPanel infoPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        JLabel infoLabel = new JLabel("Configure the XSS payload used for testing:");
+        infoLabel.setFont(infoLabel.getFont().deriveFont(Font.PLAIN, 12f));
+        infoPanel.add(infoLabel);
         
-        bxssPayloadField = new JTextField(extension.getBxssPayload());
-        panel.add(bxssPayloadField);
+        // Payload text area
+        bxssPayloadField = new JTextArea(extension.getBxssPayload(), 4, 30);
+        bxssPayloadField.setLineWrap(true);
+        bxssPayloadField.setWrapStyleWord(true);
+        bxssPayloadField.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        bxssPayloadField.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
+        JScrollPane scrollPane = new JScrollPane(bxssPayloadField);
+        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
+        scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
         
-        JPanel controlsPanel = new JPanel(new FlowLayout());
-        JButton saveButton = new JButton("Save");
+        // Button panel
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 5));
+        
+        JButton saveButton = new JButton("Save Payload");
         saveButton.addActionListener(e -> saveBxssPayload());
-        controlsPanel.add(saveButton);
+        buttonPanel.add(saveButton);
         
-        JButton defaultButton = new JButton("Default");
+        JButton defaultButton = new JButton("Reset to Default");
         defaultButton.addActionListener(e -> setDefaultBxssPayload());
-        controlsPanel.add(defaultButton);
+        buttonPanel.add(defaultButton);
         
-        panel.add(controlsPanel);
+        // Assembly
+        panel.add(infoPanel, BorderLayout.NORTH);
+        panel.add(scrollPane, BorderLayout.CENTER);
+        panel.add(buttonPanel, BorderLayout.SOUTH);
         
         return panel;
     }
 
     private JPanel createExtraHeadersPanel() {
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        
-        panel.add(new JLabel("Extra Headers:"));
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
         
         extraHeadersListModel = new DefaultListModel<>();
         extension.getExtraHeaders().forEach(extraHeadersListModel::addElement);
         extraHeadersList = new JList<>(extraHeadersListModel);
-        panel.add(new JScrollPane(extraHeadersList));
+        extraHeadersList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        JScrollPane scrollPane = new JScrollPane(extraHeadersList);
+        scrollPane.setPreferredSize(new Dimension(200, 150));
+        panel.add(scrollPane, BorderLayout.CENTER);
         
-        // Controls
-        JPanel controlsPanel = new JPanel(new FlowLayout());
-        newExtraHeaderField = new JTextField(15);
-        controlsPanel.add(newExtraHeaderField);
+        // Input panel
+        JPanel inputPanel = new JPanel(new BorderLayout());
+        newExtraHeaderField = new JTextField();
+        newExtraHeaderField.addActionListener(e -> addExtraHeader()); // Allow Enter key to add
+        inputPanel.add(new JLabel("New header:"), BorderLayout.WEST);
+        inputPanel.add(newExtraHeaderField, BorderLayout.CENTER);
+        
+        // Button panel
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 0));
         
         JButton addButton = new JButton("Add");
         addButton.addActionListener(e -> addExtraHeader());
-        controlsPanel.add(addButton);
+        buttonPanel.add(addButton);
         
         JButton deleteButton = new JButton("Delete");
         deleteButton.addActionListener(e -> deleteExtraHeader());
-        controlsPanel.add(deleteButton);
+        buttonPanel.add(deleteButton);
         
         JButton clearButton = new JButton("Clear");
         clearButton.addActionListener(e -> clearExtraHeaders());
-        controlsPanel.add(clearButton);
+        buttonPanel.add(clearButton);
         
-        panel.add(controlsPanel);
+        // Controls panel
+        JPanel controlsPanel = new JPanel(new BorderLayout());
+        controlsPanel.add(inputPanel, BorderLayout.NORTH);
+        controlsPanel.add(buttonPanel, BorderLayout.SOUTH);
+        
+        panel.add(controlsPanel, BorderLayout.SOUTH);
         
         return panel;
     }
@@ -459,8 +543,9 @@ public class HeaderBangerTab {
             extension.extractSqliSleepTime();
             extension.updateInjectedHeaders();
             extension.saveSettings();
+            JOptionPane.showMessageDialog(null, "SQL Injection payload saved successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
         } else {
-            JOptionPane.showMessageDialog(null, "The SQL Injection payload cannot be empty.");
+            JOptionPane.showMessageDialog(null, "The SQL Injection payload cannot be empty.", "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -471,6 +556,7 @@ public class HeaderBangerTab {
         extension.extractSqliSleepTime();
         extension.updateInjectedHeaders();
         extension.saveSettings();
+        JOptionPane.showMessageDialog(null, "SQL Injection payload reset to default!", "Success", JOptionPane.INFORMATION_MESSAGE);
     }
 
     private void saveBxssPayload() {
@@ -479,8 +565,9 @@ public class HeaderBangerTab {
             extension.setBxssPayload(newPayload);
             extension.updateInjectedHeaders();
             extension.saveSettings();
+            JOptionPane.showMessageDialog(null, "Blind XSS payload saved successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
         } else {
-            JOptionPane.showMessageDialog(null, "The Blind XSS payload cannot be empty.");
+            JOptionPane.showMessageDialog(null, "The Blind XSS payload cannot be empty.", "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -491,6 +578,7 @@ public class HeaderBangerTab {
         bxssPayloadField.setText(defaultPayload);
         extension.updateInjectedHeaders();
         extension.saveSettings();
+        JOptionPane.showMessageDialog(null, "Blind XSS payload reset to default!", "Success", JOptionPane.INFORMATION_MESSAGE);
     }
 
     // Host management methods
