@@ -1003,7 +1003,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     }
 
     private void processSensitiveHeadersScan(InterceptedResponse interceptedResponse) {
-        HttpRequest originalRequest = interceptedResponse.request();
+        HttpRequest originalRequest = interceptedResponse.initiatingRequest();
         
         api.logging().logToOutput("Processing sensitive headers scan for: " + originalRequest.url());
         
