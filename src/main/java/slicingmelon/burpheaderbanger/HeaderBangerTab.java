@@ -293,7 +293,7 @@ public class HeaderBangerTab {
         sqliPayloadField = new JTextArea(extension.getSqliPayload(), 1, 40); // Changed from 4 rows to 1 row, increased columns
         sqliPayloadField.setLineWrap(true);
         sqliPayloadField.setWrapStyleWord(true);
-        sqliPayloadField.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        // Removed custom font - use default for better readability
         sqliPayloadField.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
         JScrollPane scrollPane = new JScrollPane(sqliPayloadField);
         scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
@@ -333,7 +333,7 @@ public class HeaderBangerTab {
         bxssPayloadField = new JTextArea(extension.getBxssPayload(), 1, 40); // Changed from 4 rows to 1 row, increased columns
         bxssPayloadField.setLineWrap(true);
         bxssPayloadField.setWrapStyleWord(true);
-        bxssPayloadField.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        // Removed custom font - use default for better readability
         bxssPayloadField.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
         JScrollPane scrollPane = new JScrollPane(bxssPayloadField);
         scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
