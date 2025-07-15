@@ -1,7 +1,6 @@
 package slicingmelon.burpheaderbanger;
 
 import burp.api.montoya.MontoyaApi;
-import burp.api.montoya.collaborator.CollaboratorPayload;
 
 import javax.swing.*;
 import java.awt.*;

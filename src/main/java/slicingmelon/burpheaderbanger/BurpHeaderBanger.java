@@ -4,46 +4,19 @@ import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.collaborator.CollaboratorClient;
 import burp.api.montoya.collaborator.CollaboratorPayload;
-import burp.api.montoya.collaborator.CollaboratorServer;
-import burp.api.montoya.collaborator.DnsDetails;
-import burp.api.montoya.collaborator.HttpDetails;
 import burp.api.montoya.collaborator.Interaction;
 import burp.api.montoya.collaborator.SecretKey;
-import burp.api.montoya.core.ByteArray;
-import burp.api.montoya.core.ToolType;
-import burp.api.montoya.http.HttpService;
 import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.http.message.requests.HttpRequest;
-import burp.api.montoya.http.message.responses.HttpResponse;
 import burp.api.montoya.http.message.HttpHeader;
 import burp.api.montoya.persistence.PersistedObject;
-import burp.api.montoya.proxy.http.InterceptedRequest;
+import burp.api.montoya.core.Marker;
 import burp.api.montoya.proxy.http.InterceptedResponse;
-import burp.api.montoya.proxy.http.ProxyRequestHandler;
-import burp.api.montoya.proxy.http.ProxyRequestReceivedAction;
-import burp.api.montoya.proxy.http.ProxyRequestToBeSentAction;
-import burp.api.montoya.proxy.http.ProxyResponseHandler;
-import burp.api.montoya.proxy.http.ProxyResponseReceivedAction;
-import burp.api.montoya.proxy.http.ProxyResponseToBeSentAction;
-import burp.api.montoya.scanner.AuditResult;
-import burp.api.montoya.scanner.ConsolidationAction;
-import burp.api.montoya.scanner.scancheck.ActiveScanCheck;
-import burp.api.montoya.scanner.scancheck.PassiveScanCheck;
 import burp.api.montoya.scanner.scancheck.ScanCheckType;
-import burp.api.montoya.scanner.audit.insertionpoint.AuditInsertionPoint;
 import burp.api.montoya.scanner.audit.issues.AuditIssue;
 import burp.api.montoya.scanner.audit.issues.AuditIssueConfidence;
 import burp.api.montoya.scanner.audit.issues.AuditIssueSeverity;
-import burp.api.montoya.http.Http;
 
-import static burp.api.montoya.scanner.AuditResult.auditResult;
-import static burp.api.montoya.scanner.ConsolidationAction.KEEP_EXISTING;
-import static java.util.Collections.emptyList;
-import burp.api.montoya.ui.contextmenu.ContextMenuEvent;
-import burp.api.montoya.ui.contextmenu.ContextMenuItemsProvider;
-
-import javax.swing.*;
-import java.awt.*;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -54,14 +27,13 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, ProxyResponseHandler, 
-        ActiveScanCheck, PassiveScanCheck, ContextMenuItemsProvider {
+public class BurpHeaderBanger implements BurpExtension {
 
     private static final String VERSION = "0.0.1";
-    private static final int MAX_DICTIONARY_SIZE = 5000;
+    public static final int MAX_DICTIONARY_SIZE = 5000;
     private static final int DEFAULT_SQLI_SLEEP_TIME = 17;
     
-    private static final Set<String> SKIP_CONTENT_TYPES = Set.of(
+    public static final Set<String> SKIP_CONTENT_TYPES = Set.of(
             "image/png", "image/jpeg", "image/jpg", "image/gif",
             "video/webm", "video/mp4", "text/event-stream",
             "application/octet-stream", "font/woff", "font/woff2"
@@ -99,19 +71,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     // Efficient payload correlation tracking
     private final Map<String, PayloadCorrelation> payloadMap = new ConcurrentHashMap<>();
 
-    private static class PayloadCorrelation {
-        final String requestUrl;
-        final String headerName;
-        final String requestMethod;
-        final long timestamp;
 
-        PayloadCorrelation(String requestUrl, String headerName, String requestMethod) {
-            this.requestUrl = requestUrl;
-            this.headerName = headerName;
-            this.requestMethod = requestMethod;
-            this.timestamp = System.currentTimeMillis();
-        }
-    }
     
     // Default headers
     private static final List<String> DEFAULT_HEADERS = Arrays.asList(
@@ -159,12 +119,19 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         // Update injected headers
         updateInjectedHeaders();
         
+        // Create helper classes
+        AuditIssueCreator auditIssueCreator = new AuditIssueCreator(this, api);
+        ProxyHandler proxyHandler = new ProxyHandler(this, api, scheduler, collaboratorClient, 
+                collaboratorServerLocation, requestTimestamps, payloadMap, auditIssueCreator);
+        ScanCheck scanCheck = new ScanCheck(this, api, scheduler, collaboratorClient, 
+                payloadMap, auditIssueCreator);
+        
         // Register handlers
-        api.proxy().registerRequestHandler(this);
-        api.proxy().registerResponseHandler(this);
-        api.scanner().registerActiveScanCheck(this, ScanCheckType.PER_REQUEST);
-        api.scanner().registerPassiveScanCheck(this, ScanCheckType.PER_REQUEST);
-        api.userInterface().registerContextMenuItemsProvider(this);
+        api.proxy().registerRequestHandler(proxyHandler);
+        api.proxy().registerResponseHandler(proxyHandler);
+        api.scanner().registerActiveScanCheck(scanCheck, ScanCheckType.PER_REQUEST);
+        api.scanner().registerPassiveScanCheck(scanCheck, ScanCheckType.PER_REQUEST);
+        api.userInterface().registerContextMenuItemsProvider(scanCheck);
         
         // Create and register UI
         headerBangerTab = new HeaderBangerTab(this, api);
@@ -330,6 +297,9 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     public void setBxssPayload(String payload) { this.bxssPayload = payload; }
     
     public CollaboratorClient getCollaboratorClient() { return collaboratorClient; }
+    
+    public int getSqliSleepTime() { return sqliSleepTime; }
+    public List<String> getInjectedHeaders() { return injectedHeaders; }
     
     public List<String> getDefaultHeaders() { return new ArrayList<>(DEFAULT_HEADERS); }
     public List<String> getDefaultSensitiveHeaders() { return new ArrayList<>(DEFAULT_SENSITIVE_HEADERS); }
@@ -524,32 +494,53 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             // Use the first matching request from proxy history
             burp.api.montoya.proxy.ProxyHttpRequestResponse originalRequestResponse = proxyHistory.get(0);
             
-            try {
-                // Create audit issue using the original request/response from proxy history
-                AuditIssue issue = AuditIssue.auditIssue(
-                    "Header Injection XSS via " + correlation.headerName,
-                    "Cross-Site Scripting (XSS) vulnerability detected through header injection in the " 
-                    + correlation.headerName + " header. The payload was successfully executed as confirmed by "
-                    + "collaborator interaction " + interaction.id() + ". This allows attackers to inject arbitrary "
-                    + "JavaScript code that will be executed in the context of other users' browsers.",
-                    "Fix this vulnerability by properly validating and sanitizing all user input, especially in HTTP headers. "
-                    + "Implement proper output encoding when reflecting user-controlled data in responses.",
-                    originalRequestResponse.finalRequest().url(),
-                    AuditIssueSeverity.HIGH,
-                    AuditIssueConfidence.CERTAIN,
-                    "This vulnerability allows attackers to execute arbitrary JavaScript in the victim's browser, "
-                    + "potentially leading to session hijacking, defacement, or other malicious activities.",
-                    "The application reflects user-controlled header values without proper validation or encoding, "
-                    + "allowing XSS attacks through HTTP header injection.",
-                    AuditIssueSeverity.HIGH,
-                    HttpRequestResponse.httpRequestResponse(originalRequestResponse.finalRequest(), originalRequestResponse.originalResponse())
-                );
-                
-                api.siteMap().add(issue);
-                api.logging().logToOutput("Audit issue created successfully: Header Injection XSS via " + correlation.headerName);
-            } catch (Exception e) {
-                api.logging().logToError("Failed to create audit issue: " + e.getMessage());
-            }
+                            try {
+                    // Create audit issue using the original request/response from proxy history
+                    HttpRequestResponse evidenceRequestResponse = HttpRequestResponse.httpRequestResponse(
+                        originalRequestResponse.finalRequest(), 
+                        originalRequestResponse.originalResponse()
+                    );
+                    
+                    // Get markers for the XSS payload in request and response
+                    // Use the collaborator domain to find the payload
+                    String collaboratorDomain = interaction.id().toString();
+                    List<Marker> requestMarkers = getRequestMarkers(originalRequestResponse.finalRequest(), collaboratorDomain);
+                    List<Marker> responseMarkers = getResponseMarkers(evidenceRequestResponse, collaboratorDomain);
+                    
+                    // Add markers to the evidence
+                    HttpRequestResponse markedEvidence = evidenceRequestResponse;
+                    if (!requestMarkers.isEmpty()) {
+                        markedEvidence = markedEvidence.withRequestMarkers(requestMarkers);
+                    }
+                    if (!responseMarkers.isEmpty()) {
+                        markedEvidence = markedEvidence.withResponseMarkers(responseMarkers);
+                    }
+                    
+                    AuditIssue issue = AuditIssue.auditIssue(
+                        "Header Injection XSS via " + correlation.headerName,
+                        "Cross-Site Scripting (XSS) vulnerability detected through header injection in the " 
+                        + correlation.headerName + " header. The payload was successfully executed as confirmed by "
+                        + "collaborator interaction " + interaction.id() + ". This allows attackers to inject arbitrary "
+                        + "JavaScript code that will be executed in the context of other users' browsers. "
+                        + "Collaborator domain: " + collaboratorDomain,
+                        "Fix this vulnerability by properly validating and sanitizing all user input, especially in HTTP headers. "
+                        + "Implement proper output encoding when reflecting user-controlled data in responses.",
+                        originalRequestResponse.finalRequest().url(),
+                        AuditIssueSeverity.HIGH,
+                        AuditIssueConfidence.CERTAIN,
+                        "This vulnerability allows attackers to execute arbitrary JavaScript in the victim's browser, "
+                        + "potentially leading to session hijacking, defacement, or other malicious activities.",
+                        "The application reflects user-controlled header values without proper validation or encoding, "
+                        + "allowing XSS attacks through HTTP header injection.",
+                        AuditIssueSeverity.HIGH,
+                        markedEvidence
+                    );
+                    
+                    api.siteMap().add(issue);
+                    api.logging().logToOutput("Audit issue created successfully: Header Injection XSS via " + correlation.headerName);
+                } catch (Exception e) {
+                    api.logging().logToError("Failed to create audit issue: " + e.getMessage());
+                }
         } else {
             api.logging().logToOutput("Could not find original request in proxy history for interaction: " + interactionId);
             
@@ -558,12 +549,27 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                 HttpRequest issueRequest = HttpRequest.httpRequestFromUrl(correlation.requestUrl);
                 HttpRequestResponse issueRequestResponse = api.http().sendRequest(issueRequest);
                 
+                // Get markers for the XSS payload in request and response
+                String collaboratorDomain = interaction.id().toString();
+                List<Marker> requestMarkers = getRequestMarkers(issueRequest, collaboratorDomain);
+                List<Marker> responseMarkers = getResponseMarkers(issueRequestResponse, collaboratorDomain);
+                
+                // Add markers to the evidence
+                HttpRequestResponse markedEvidence = issueRequestResponse;
+                if (!requestMarkers.isEmpty()) {
+                    markedEvidence = markedEvidence.withRequestMarkers(requestMarkers);
+                }
+                if (!responseMarkers.isEmpty()) {
+                    markedEvidence = markedEvidence.withResponseMarkers(responseMarkers);
+                }
+                
                 AuditIssue issue = AuditIssue.auditIssue(
                     "Header Injection XSS via " + correlation.headerName,
                     "Cross-Site Scripting (XSS) vulnerability detected through header injection in the " 
                     + correlation.headerName + " header. The payload was successfully executed as confirmed by "
                     + "collaborator interaction " + interaction.id() + ". This allows attackers to inject arbitrary "
-                    + "JavaScript code that will be executed in the context of other users' browsers.",
+                    + "JavaScript code that will be executed in the context of other users' browsers. "
+                    + "Collaborator domain: " + collaboratorDomain,
                     "Fix this vulnerability by properly validating and sanitizing all user input, especially in HTTP headers. "
                     + "Implement proper output encoding when reflecting user-controlled data in responses.",
                     correlation.requestUrl,
@@ -574,7 +580,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                     "The application reflects user-controlled header values without proper validation or encoding, "
                     + "allowing XSS attacks through HTTP header injection.",
                     AuditIssueSeverity.HIGH,
-                    issueRequestResponse
+                    markedEvidence
                 );
                 
                 api.siteMap().add(issue);
@@ -624,6 +630,72 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             attackHeaders.append(header);
         }
         return attackHeaders.toString();
+    }
+
+    private List<Marker> getResponseMarkers(HttpRequestResponse requestResponse, String payload) {
+        List<Marker> markers = new ArrayList<>();
+        
+        if (requestResponse.response() == null) {
+            return markers;
+        }
+        
+        String responseString = requestResponse.response().toString();
+        
+        // Search for the payload in the response
+        int start = 0;
+        while (start < responseString.length()) {
+            int found = responseString.indexOf(payload, start);
+            if (found == -1) {
+                break;
+            }
+            
+            markers.add(Marker.marker(found, found + payload.length()));
+            start = found + payload.length();
+        }
+        
+        // If no direct payload found, look for parts of it (like the sleep function)
+        if (markers.isEmpty()) {
+            start = 0;
+            while (start < responseString.length()) {
+                int found = responseString.indexOf("sleep(", start);
+                if (found == -1) {
+                    break;
+                }
+                
+                // Try to find the end of the sleep function call
+                int end = found + 6; // "sleep(" length
+                while (end < responseString.length() && responseString.charAt(end) != ')') {
+                    end++;
+                }
+                if (end < responseString.length()) {
+                    end++; // Include the closing parenthesis
+                    markers.add(Marker.marker(found, end));
+                }
+                start = end;
+            }
+        }
+        
+        return markers;
+    }
+
+    private List<Marker> getRequestMarkers(HttpRequest request, String payload) {
+        List<Marker> markers = new ArrayList<>();
+        
+        String requestString = request.toString();
+        
+        // Search for the payload in the request
+        int start = 0;
+        while (start < requestString.length()) {
+            int found = requestString.indexOf(payload, start);
+            if (found == -1) {
+                break;
+            }
+            
+            markers.add(Marker.marker(found, found + payload.length()));
+            start = found + payload.length();
+        }
+        
+        return markers;
     }
 
     // Utility methods for header handling
@@ -710,102 +782,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         return newHeaders;
     }
 
-    // ProxyRequestHandler implementation
-    @Override
-    public ProxyRequestReceivedAction handleRequestReceived(InterceptedRequest interceptedRequest) {
-        if (!extensionActive) {
-            return ProxyRequestReceivedAction.continueWith(interceptedRequest);
-        }
-
-        HttpRequest request = interceptedRequest;
-        
-        // IMPORTANT: Skip modification for requests going to the collaborator server
-        // This prevents interference with collaborator interactions
-        if (collaboratorServerLocation != null && request.url().contains(collaboratorServerLocation)) {
-            api.logging().logToOutput("Skipping collaborator request: " + request.url());
-            return ProxyRequestReceivedAction.continueWith(interceptedRequest);
-        }
-        
-        // Check if only processing in-scope items
-        if (onlyInScopeItems && !api.scope().isInScope(request.url())) {
-            return ProxyRequestReceivedAction.continueWith(interceptedRequest);
-        }
-
-        // Check if host should be skipped
-        String host = request.httpService().host();
-        if (skipHosts.contains(host)) {
-            return ProxyRequestReceivedAction.continueWith(interceptedRequest);
-        }
-
-        // Modify request headers
-        HttpRequest modifiedRequest = modifyRequestHeaders(request);
-        
-        // DEBUG: Show comparison of original vs modified request
-        api.logging().logToOutput("DEBUG PROXY: Original request headers: " + request.headers().size());
-        api.logging().logToOutput("DEBUG PROXY: Modified request headers: " + modifiedRequest.headers().size());
-        
-        // Check if extra headers are present in the modified request
-        for (String extraHeader : extraHeaders) {
-            String[] parts = extraHeader.split(":", 2);
-            if (parts.length == 2) {
-                String headerName = parts[0].trim();
-                boolean found = modifiedRequest.headers().stream()
-                        .anyMatch(h -> h.name().equalsIgnoreCase(headerName));
-                api.logging().logToOutput("DEBUG PROXY: Extra header '" + headerName + "' found in modified request: " + found);
-            }
-        }
-        
-        // Store timestamp for response time analysis
-        String requestKey = request.url();
-        requestTimestamps.put(requestKey, System.currentTimeMillis());
-        
-        // Limit dictionary size
-        if (requestTimestamps.size() > MAX_DICTIONARY_SIZE) {
-            String oldestKey = requestTimestamps.entrySet().stream()
-                    .min(Map.Entry.comparingByValue())
-                    .map(Map.Entry::getKey)
-                    .orElse(null);
-            if (oldestKey != null) {
-                requestTimestamps.remove(oldestKey);
-            }
-        }
-
-        return ProxyRequestReceivedAction.continueWith(modifiedRequest);
-    }
-
-    @Override
-    public ProxyRequestToBeSentAction handleRequestToBeSent(InterceptedRequest interceptedRequest) {
-        return ProxyRequestToBeSentAction.continueWith(interceptedRequest);
-    }
-
-    // ProxyResponseHandler implementation
-    @Override
-    public ProxyResponseReceivedAction handleResponseReceived(InterceptedResponse interceptedResponse) {
-        if (!extensionActive) { // No longer checking attackMode == 2 here
-            return ProxyResponseReceivedAction.continueWith(interceptedResponse);
-        }
-
-        // IMPORTANT: Skip responses from collaborator server to prevent incorrect correlation
-        if (collaboratorServerLocation != null && interceptedResponse.request().url().contains(collaboratorServerLocation)) {
-            api.logging().logToOutput("Skipping collaborator response from: " + interceptedResponse.request().url());
-            return ProxyResponseReceivedAction.continueWith(interceptedResponse);
-        }
-
-        // Process response for SQL injection detection
-        if (attackMode == 1) {
-            processResponseForSqli(interceptedResponse);
-        }
-        
-        // Launch separate scan for sensitive headers
-        scheduler.execute(() -> processSensitiveHeadersScan(interceptedResponse));
-
-        return ProxyResponseReceivedAction.continueWith(interceptedResponse);
-    }
-
-    @Override
-    public ProxyResponseToBeSentAction handleResponseToBeSent(InterceptedResponse interceptedResponse) {
-        return ProxyResponseToBeSentAction.continueWith(interceptedResponse);
-    }
+    // Proxy handlers now in separate ProxyHandler class
 
     private HttpRequest modifyRequestHeaders(HttpRequest request) {
         // For regular headers, inject both XSS and SQL injection payloads based on attack mode
@@ -1105,12 +1082,26 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                 interceptedResponse
             );
             
+            // Get markers for the SQL injection payload in request and response
+            List<Marker> requestMarkers = getRequestMarkers(interceptedResponse.initiatingRequest(), sqliPayload);
+            List<Marker> responseMarkers = getResponseMarkers(evidenceRequestResponse, sqliPayload);
+            
+            // Add markers to the evidence
+            HttpRequestResponse markedEvidence = evidenceRequestResponse;
+            if (!requestMarkers.isEmpty()) {
+                markedEvidence = markedEvidence.withRequestMarkers(requestMarkers);
+            }
+            if (!responseMarkers.isEmpty()) {
+                markedEvidence = markedEvidence.withResponseMarkers(responseMarkers);
+            }
+            
             AuditIssue issue = AuditIssue.auditIssue(
                 "Time-based SQL Injection via Headers",
                 "Time-based SQL injection vulnerability detected through header injection. The application "
                 + "responded with a delay of " + responseTime + " ms, which suggests that the injected "
                 + "time-based SQL payload was executed. This indicates that user input is being directly "
-                + "incorporated into SQL queries without proper sanitization.",
+                + "incorporated into SQL queries without proper sanitization. "
+                + "Payload: " + sqliPayload,
                 "Fix this vulnerability by properly validating and sanitizing all user input, especially in HTTP headers. "
                 + "Implement proper input validation and use parameterized queries to prevent SQL injection attacks.",
                 interceptedResponse.request().url(),
@@ -1121,7 +1112,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                 "The application processes user-controlled header values without proper validation or sanitization, "
                 + "allowing SQL injection attacks through HTTP header injection.",
                 AuditIssueSeverity.HIGH,
-                evidenceRequestResponse
+                markedEvidence
             );
             
             api.siteMap().add(issue);
@@ -1144,12 +1135,26 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         
         // Create proper audit issue using the original request with injected headers
         try {
+            // Get markers for the SQL injection payload in request and response
+            List<Marker> requestMarkers = getRequestMarkers(response.request(), sqliPayload);
+            List<Marker> responseMarkers = getResponseMarkers(response, sqliPayload);
+            
+            // Add markers to the evidence
+            HttpRequestResponse markedEvidence = response;
+            if (!requestMarkers.isEmpty()) {
+                markedEvidence = markedEvidence.withRequestMarkers(requestMarkers);
+            }
+            if (!responseMarkers.isEmpty()) {
+                markedEvidence = markedEvidence.withResponseMarkers(responseMarkers);
+            }
+            
             AuditIssue issue = AuditIssue.auditIssue(
                 "Time-based SQL Injection via Sensitive Headers",
                 "Time-based SQL injection vulnerability detected through sensitive header injection. The application "
                 + "responded with a delay of " + responseTime + " ms, which suggests that the injected "
                 + "time-based SQL payload was executed. This indicates that user input from sensitive headers is being "
-                + "directly incorporated into SQL queries without proper sanitization.",
+                + "directly incorporated into SQL queries without proper sanitization. "
+                + "Payload: " + sqliPayload,
                 "Fix this vulnerability by properly validating and sanitizing all user input, especially in HTTP headers. "
                 + "Implement proper input validation and use parameterized queries to prevent SQL injection attacks.",
                 response.request().url(),
@@ -1160,7 +1165,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                 "The application processes user-controlled header values without proper validation or sanitization, "
                 + "allowing SQL injection attacks through HTTP header injection.",
                 AuditIssueSeverity.HIGH,
-                response
+                markedEvidence
             );
             
             api.siteMap().add(issue);
@@ -1172,144 +1177,6 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         api.logging().logToOutput("═══════════════════════════════════════════════════════════");
     }
 
-    // ActiveScanCheck implementation
-    @Override
-    public String checkName() {
-        return "Header Banger";
-    }
-
-    @Override
-    public AuditResult doCheck(HttpRequestResponse baseRequestResponse, AuditInsertionPoint auditInsertionPoint, Http http) {
-        return auditResult(emptyList()); // We handle scanning through proxy
-    }
-
-    @Override
-    public AuditResult doCheck(HttpRequestResponse baseRequestResponse) {
-        return auditResult(emptyList()); // We handle scanning through proxy
-    }
-
-    @Override
-    public ConsolidationAction consolidateIssues(AuditIssue existingIssue, AuditIssue newIssue) {
-        return KEEP_EXISTING; // Keep the existing issue
-    }
-
-    // ContextMenuItemsProvider implementation
-    @Override
-    public List<Component> provideMenuItems(ContextMenuEvent event) {
-        List<Component> menuItems = new ArrayList<>();
-        
-        JMenuItem scanItem = new JMenuItem("Scan this request with Header Banger");
-        scanItem.addActionListener(_ -> scanSelectedRequest(event));
-        menuItems.add(scanItem);
-        
-        JMenuItem excludeHostItem = new JMenuItem("Exclude Host from Header Banger scans");
-        excludeHostItem.addActionListener(_ -> excludeHostFromScans(event));
-        menuItems.add(excludeHostItem);
-        
-        return menuItems;
-    }
-
-    private void scanSelectedRequest(ContextMenuEvent event) {
-        Optional<HttpRequestResponse> selectedMessage = event.selectedRequestResponses().stream().findFirst();
-        if (selectedMessage.isPresent()) {
-            api.logging().logToOutput("Context menu scan initiated for: " + selectedMessage.get().request().url());
-            
-            // Create a simplified sensitive headers scan for context menu
-            scheduler.execute(() -> {
-                HttpRequest originalRequest = selectedMessage.get().request();
-                String hostValue = getHeaderValue(originalRequest.headers(), "Host");
-                
-                if (hostValue != null) {
-                    if (attackMode == 2) {
-                        api.logging().logToOutput("Context menu: Processing BXSS for sensitive headers");
-                        
-                        // BXSS logic for context menu
-                        List<HttpHeader> modifiedHeaders = new ArrayList<>(originalRequest.headers());
-                        
-                        for (String sensitiveHeader : sensitiveHeaders) {
-                            CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
-                            String payloadDomain = collabPayload.toString();
-                            String finalPayload = hostValue + bxssPayload.replace("{{collaborator}}", payloadDomain);
-                            
-                            // Store correlation for this payload
-                            PayloadCorrelation correlation = new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method());
-                            payloadMap.put(payloadDomain, correlation);
-                            
-                            api.logging().logToOutput("Context menu: Added payload to map: " + payloadDomain + " -> " + sensitiveHeader);
-                            
-                            // Add or replace the sensitive header
-                            boolean headerFoundAndReplaced = false;
-                            for (int i = 0; i < modifiedHeaders.size(); i++) {
-                                if (modifiedHeaders.get(i).name().equalsIgnoreCase(sensitiveHeader)) {
-                                    modifiedHeaders.set(i, HttpHeader.httpHeader(sensitiveHeader, finalPayload));
-                                    headerFoundAndReplaced = true;
-                                    break;
-                                }
-                            }
-                            if (!headerFoundAndReplaced) {
-                                modifiedHeaders.add(HttpHeader.httpHeader(sensitiveHeader, finalPayload));
-                            }
-                        }
-                        
-                        // Add extra headers
-                        HttpRequest finalRequest = originalRequest.withUpdatedHeaders(addOrReplaceHeaders(modifiedHeaders, extraHeaders));
-                        
-                        api.logging().logToOutput("Context menu: Sending request with " + sensitiveHeaders.size() + " sensitive headers");
-                        api.logging().logToOutput("Context menu: Total payloads in map: " + payloadMap.size());
-                        
-                        api.http().sendRequest(finalRequest);
-                        api.logging().logToOutput("Context menu scan: Sent BXSS probes for sensitive headers for URL: " + originalRequest.url());
-                        return;
-                    }
-
-                    api.logging().logToOutput("Context menu: Processing SQL injection for sensitive headers");
-                    
-                    // SQLi logic for sensitive headers
-                    List<String> headersToAdd = new ArrayList<>();
-                    
-                    for (String sensitiveHeader : sensitiveHeaders) {
-                        headersToAdd.add(sensitiveHeader + ": " + hostValue + sqliPayload);
-                    }
-                    
-                    headersToAdd.addAll(extraHeaders);
-                    
-                    List<HttpHeader> newHeaders = addOrReplaceHeaders(originalRequest.headers(), headersToAdd);
-                    HttpRequest modifiedRequest = originalRequest.withUpdatedHeaders(newHeaders);
-                    
-                    try {
-                        long startTime = System.currentTimeMillis();
-                        HttpRequestResponse response = api.http().sendRequest(modifiedRequest);
-                        long endTime = System.currentTimeMillis();
-                        long responseTime = endTime - startTime;
-                        
-                        if (responseTime >= sqliSleepTime * 1000) {
-                            api.logging().logToOutput("Context menu scan: Possible Blind SQL Injection detected! Response time: " + responseTime + " ms at URL: " + originalRequest.url());
-                            createSensitiveHeaderSqlIssue(response, responseTime);
-                        } else {
-                            api.logging().logToOutput("Context menu scan: Request completed in " + responseTime + " ms for URL: " + originalRequest.url());
-                        }
-                    } catch (Exception e) {
-                        api.logging().logToError("Error in context menu scan: " + e.getMessage());
-                    }
-                } else {
-                    api.logging().logToOutput("Context menu: No Host header found for " + originalRequest.url());
-                }
-            });
-        }
-    }
-
-    private void excludeHostFromScans(ContextMenuEvent event) {
-        Optional<HttpRequestResponse> selectedMessage = event.selectedRequestResponses().stream().findFirst();
-        if (selectedMessage.isPresent()) {
-            String host = selectedMessage.get().request().httpService().host();
-            if (!skipHosts.contains(host)) {
-                skipHosts.add(host);
-                saveSettings();
-                api.logging().logToOutput("Host " + host + " added to the exclusion list");
-            } else {
-                api.logging().logToOutput("Host " + host + " is already in the exclusion list");
-            }
-        }
-    }
+    // Scan check methods and context menu methods now in separate ScanCheck class
 }
 
