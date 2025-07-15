@@ -89,6 +89,8 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     
     // Default headers
     private static final List<String> DEFAULT_HEADERS = Arrays.asList(
+            "User-Agent",
+            "Referer",
             "X-Forwarded-For",
             "X-Real-IP",
             "Forwarded",
@@ -302,7 +304,32 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             try {
                 List<Interaction> interactions = collaboratorClient.getAllInteractions();
                 for (Interaction interaction : interactions) {
-                    api.logging().logToOutput("BOOM Received interaction: " + interaction.toString());
+                    api.logging().logToOutput("🚀 SUCCESSFUL XSS DETECTED! 🚀");
+                    api.logging().logToOutput("═══════════════════════════════════════════════════════════");
+                    
+                    // Log detailed interaction information
+                    api.logging().logToOutput("📋 Interaction Details:");
+                    api.logging().logToOutput("  • ID: " + interaction.id());
+                    api.logging().logToOutput("  • Type: " + interaction.type());
+                    api.logging().logToOutput("  • Time: " + new java.util.Date());
+                    api.logging().logToOutput("  • Payload: " + bxssPayload);
+                    api.logging().logToOutput("  • Headers Used: " + getCurrentAttackHeaders());
+                    
+                    // Log basic interaction type information
+                    if (interaction.dnsDetails().isPresent()) {
+                        api.logging().logToOutput("  • Interaction Type: DNS");
+                    }
+                    
+                    if (interaction.httpDetails().isPresent()) {
+                        api.logging().logToOutput("  • Interaction Type: HTTP");
+                    }
+                    
+                    if (interaction.smtpDetails().isPresent()) {
+                        api.logging().logToOutput("  • Interaction Type: SMTP");
+                    }
+                    
+                    api.logging().logToOutput("═══════════════════════════════════════════════════════════");
+                    
                     // Create XSS issue
                     createXssIssue(interaction);
                 }
@@ -313,10 +340,26 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     }
 
     private void createXssIssue(Interaction interaction) {
-        // Create an XSS issue based on collaborator interaction
-        // This would need more context about the original request
-        // For now, just log the interaction
-        api.logging().logToOutput("XSS interaction detected: " + interaction.toString());
+        // Enhanced XSS issue creation with more context
+        api.logging().logToOutput("💥 XSS VULNERABILITY CONFIRMED!");
+        api.logging().logToOutput("🎯 Attack Vector: Header injection via " + getCurrentAttackHeaders());
+        api.logging().logToOutput("🔍 Payload Used: " + bxssPayload);
+        api.logging().logToOutput("⚡ Impact: Cross-Site Scripting (XSS) execution detected");
+        api.logging().logToOutput("🕐 Detected: " + new java.util.Date());
+        api.logging().logToOutput("📊 Interaction ID: " + interaction.id());
+        
+        // TODO: Create proper Burp issue in future versions
+        api.logging().logToOutput("📝 Note: This will be converted to a proper Burp issue in future versions");
+        api.logging().logToOutput("───────────────────────────────────────────────────────────");
+    }
+    
+    private String getCurrentAttackHeaders() {
+        StringBuilder attackHeaders = new StringBuilder();
+        for (String header : headers) {
+            if (attackHeaders.length() > 0) attackHeaders.append(", ");
+            attackHeaders.append(header);
+        }
+        return attackHeaders.toString();
     }
 
     // Utility methods for header handling
