@@ -3,7 +3,6 @@ package slicingmelon.burpheaderbanger;
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.collaborator.CollaboratorClient;
-import burp.api.montoya.collaborator.CollaboratorPayload;
 import burp.api.montoya.collaborator.Interaction;
 import burp.api.montoya.collaborator.SecretKey;
 import burp.api.montoya.http.message.HttpRequestResponse;
@@ -314,10 +313,7 @@ public class BurpHeaderBanger implements BurpExtension {
     public List<String> getDefaultHeaders() { return new ArrayList<>(DEFAULT_HEADERS); }
     public List<String> getDefaultSensitiveHeaders() { return new ArrayList<>(DEFAULT_SENSITIVE_HEADERS); }
 
-    private void initializeCollaboratorPayload() {
-        // This method is no longer needed as we generate payloads dynamically.
-        // It's kept here to avoid breaking old references, but it's empty.
-    }
+
 
     public void extractSqliSleepTime() {
         Pattern pattern = Pattern.compile("sleep\\((\\d+)\\)", Pattern.CASE_INSENSITIVE);
@@ -585,91 +581,6 @@ public class BurpHeaderBanger implements BurpExtension {
         api.logging().logToOutput("───────────────────────────────────────────────────────────");
     }
 
-    private void createAuditIssue(String issueName, String issueDetail, String requestUrl, 
-                                  AuditIssueSeverity severity, AuditIssueConfidence confidence) {
-        try {
-            // Create a simple HTTP request for the issue
-            HttpRequest issueRequest = HttpRequest.httpRequestFromUrl(requestUrl);
-            HttpRequestResponse issueRequestResponse = api.http().sendRequest(issueRequest);
-            
-            // Build the audit issue
-            AuditIssue issue = AuditIssue.auditIssue(
-                issueName,
-                issueDetail,
-                null, // remediation - can be null
-                requestUrl,
-                severity,
-                confidence,
-                null, // background - can be null
-                null, // remediation background - can be null
-                severity, // issue severity (not confidence)
-                issueRequestResponse // evidence (request/response)
-            );
-            
-            // Add the issue to Burp's issue list
-            api.siteMap().add(issue);
-            
-            api.logging().logToOutput("Audit issue created successfully: " + issueName);
-        } catch (Exception e) {
-            api.logging().logToError("Failed to create audit issue: " + e.getMessage());
-        }
-    }
-    
-    private String getCurrentAttackHeaders() {
-        StringBuilder attackHeaders = new StringBuilder();
-        for (String header : headers) {
-            if (attackHeaders.length() > 0) attackHeaders.append(", ");
-            attackHeaders.append(header);
-        }
-        return attackHeaders.toString();
-    }
-
-    private List<Marker> getResponseMarkers(HttpRequestResponse requestResponse, String payload) {
-        List<Marker> markers = new ArrayList<>();
-        
-        if (requestResponse.response() == null) {
-            return markers;
-        }
-        
-        String responseString = requestResponse.response().toString();
-        
-        // Search for the payload in the response
-        int start = 0;
-        while (start < responseString.length()) {
-            int found = responseString.indexOf(payload, start);
-            if (found == -1) {
-                break;
-            }
-            
-            markers.add(Marker.marker(found, found + payload.length()));
-            start = found + payload.length();
-        }
-        
-        // If no direct payload found, look for parts of it (like the sleep function)
-        if (markers.isEmpty()) {
-            start = 0;
-            while (start < responseString.length()) {
-                int found = responseString.indexOf("sleep(", start);
-                if (found == -1) {
-                    break;
-                }
-                
-                // Try to find the end of the sleep function call
-                int end = found + 6; // "sleep(" length
-                while (end < responseString.length() && responseString.charAt(end) != ')') {
-                    end++;
-                }
-                if (end < responseString.length()) {
-                    end++; // Include the closing parenthesis
-                    markers.add(Marker.marker(found, end));
-                }
-                start = end;
-            }
-        }
-        
-        return markers;
-    }
-
     private List<Marker> getRequestMarkersForHeader(HttpRequest request, String headerName, String payload) {
         List<Marker> markers = new ArrayList<>();
         
@@ -698,33 +609,6 @@ public class BurpHeaderBanger implements BurpExtension {
         return markers;
     }
 
-    private List<Marker> getRequestMarkersForSqli(HttpRequest request, String payload) {
-        List<Marker> markers = new ArrayList<>();
-        
-        String requestString = request.toString();
-        String[] lines = requestString.split("\r\n");
-        
-        // Find all header lines that contain the SQL payload
-        int currentPosition = 0;
-        for (String line : lines) {
-            if (line.contains(":") && line.contains(payload) && !line.startsWith("Host:")) {
-                // Mark the entire header line that contains the payload
-                int lineStart = currentPosition;
-                int lineEnd = currentPosition + line.length();
-                markers.add(Marker.marker(lineStart, lineEnd));
-                api.logging().logToOutput("Marked SQL injection header line: " + line);
-            }
-            currentPosition += line.length() + 2; // +2 for \r\n
-        }
-        
-        // If no header lines found, fall back to the old method
-        if (markers.isEmpty()) {
-            return getRequestMarkers(request, payload);
-        }
-        
-        return markers;
-    }
-
     private List<Marker> getRequestMarkers(HttpRequest request, String payload) {
         List<Marker> markers = new ArrayList<>();
         
@@ -745,203 +629,7 @@ public class BurpHeaderBanger implements BurpExtension {
         return markers;
     }
 
-    // Utility methods for header handling
-    private List<HttpHeader> convertToHttpHeaders(List<String> headerStrings) {
-        List<HttpHeader> httpHeaders = new ArrayList<>();
-        for (String headerString : headerStrings) {
-            String[] parts = headerString.split(":", 2);
-            if (parts.length == 2) {
-                httpHeaders.add(HttpHeader.httpHeader(parts[0].trim(), parts[1].trim()));
-            }
-        }
-        return httpHeaders;
-    }
-
-    private String getHeaderValue(List<HttpHeader> headers, String headerName) {
-        for (HttpHeader header : headers) {
-            if (header.name().equalsIgnoreCase(headerName)) {
-                return header.value();
-            }
-        }
-        return null;
-    }
-
-    private List<HttpHeader> addOrReplaceHeaders(List<HttpHeader> originalHeaders, List<String> headersToAdd) {
-        List<HttpHeader> newHeaders = new ArrayList<>();
-        
-        api.logging().logToOutput("DEBUG addOrReplaceHeaders: Original headers count: " + originalHeaders.size());
-        api.logging().logToOutput("DEBUG addOrReplaceHeaders: Headers to add: " + headersToAdd);
-        api.logging().logToOutput("DEBUG addOrReplaceHeaders: overwriteExtraHeaders setting: " + overwriteExtraHeaders);
-        
-        // Add original headers, excluding ones we're going to replace
-        for (HttpHeader header : originalHeaders) {
-            boolean shouldReplace = false;
-            for (String headerToAdd : headersToAdd) {
-                String[] parts = headerToAdd.split(":", 2);
-                if (parts.length == 2 && parts[0].trim().equalsIgnoreCase(header.name())) {
-                    shouldReplace = true;
-                    break;
-                }
-            }
-            if (!shouldReplace) {
-                newHeaders.add(header);
-            }
-        }
-        
-        // Add new headers
-        for (String headerToAdd : headersToAdd) {
-            String[] parts = headerToAdd.split(":", 2);
-            api.logging().logToOutput("DEBUG addOrReplaceHeaders: Processing header: " + headerToAdd + " (parts: " + parts.length + ")");
-            if (parts.length == 2) {
-                String headerName = parts[0].trim();
-                String headerValue = parts[1].trim();
-                
-                api.logging().logToOutput("DEBUG addOrReplaceHeaders: Header name: '" + headerName + "', value: '" + headerValue + "'");
-                
-                // Special handling for extra headers - they should be governed by the overwrite setting
-                boolean isExtraHeader = extraHeaders.stream()
-                        .anyMatch(eh -> eh.equalsIgnoreCase(headerToAdd));
-                
-                // For extra headers, check the overwrite setting
-                if (isExtraHeader) {
-                    if (!overwriteExtraHeaders) {
-                        // If overwrite is disabled, check if header already exists
-                        boolean exists = originalHeaders.stream()
-                                .anyMatch(h -> h.name().equalsIgnoreCase(headerName));
-                        api.logging().logToOutput("DEBUG addOrReplaceHeaders: Extra header exists check: " + exists + " for header: " + headerName);
-                        if (exists) {
-                            api.logging().logToOutput("DEBUG addOrReplaceHeaders: Skipping extra header " + headerName + " because it already exists and overwrite is disabled");
-                            continue; // Skip this header
-                        }
-                    }
-                    api.logging().logToOutput("DEBUG addOrReplaceHeaders: Processing extra header: " + headerName + " (overwrite=" + overwriteExtraHeaders + ")");
-                }
-                // Regular attack headers are always added (no overwrite check for them)
-                
-                api.logging().logToOutput("DEBUG addOrReplaceHeaders: Adding header: " + headerName + " = " + headerValue + (isExtraHeader ? " (EXTRA HEADER)" : ""));
-                newHeaders.add(HttpHeader.httpHeader(headerName, headerValue));
-            } else {
-                api.logging().logToOutput("DEBUG addOrReplaceHeaders: Skipping malformed header: " + headerToAdd);
-            }
-        }
-        
-        api.logging().logToOutput("DEBUG addOrReplaceHeaders: Final headers count: " + newHeaders.size());
-        return newHeaders;
-    }
-
-    // Proxy handlers now in separate ProxyHandler class
-
-    private void createSqlInjectionIssue(InterceptedResponse interceptedResponse, long responseTime) {
-        api.logging().logToOutput("POSSIBLE SQL INJECTION DETECTED!");
-        api.logging().logToOutput("═══════════════════════════════════════════════════════════");
-        api.logging().logToOutput("Attack Vector: SQL injection via regular headers");
-        api.logging().logToOutput("  • URL: " + interceptedResponse.request().url());
-        api.logging().logToOutput("  • Response Time: " + responseTime + " ms");
-        api.logging().logToOutput("  • Expected Sleep Time: " + sqliSleepTime + " seconds");
-        api.logging().logToOutput("Detected: " + new java.util.Date());
-        
-        // Create proper audit issue using the original request with injected headers
-        try {
-            // Use the initiating request that contains the SQL injection payloads
-            HttpRequestResponse evidenceRequestResponse = HttpRequestResponse.httpRequestResponse(
-                interceptedResponse.initiatingRequest(),
-                interceptedResponse
-            );
-            
-            // Get markers for the SQL injection payload in request and response
-            List<Marker> requestMarkers = getRequestMarkersForSqli(interceptedResponse.initiatingRequest(), sqliPayload);
-            List<Marker> responseMarkers = getResponseMarkers(evidenceRequestResponse, sqliPayload);
-            
-            // Add markers to the evidence
-            HttpRequestResponse markedEvidence = evidenceRequestResponse;
-            if (!requestMarkers.isEmpty()) {
-                markedEvidence = markedEvidence.withRequestMarkers(requestMarkers);
-            }
-            if (!responseMarkers.isEmpty()) {
-                markedEvidence = markedEvidence.withResponseMarkers(responseMarkers);
-            }
-            
-            AuditIssue issue = AuditIssue.auditIssue(
-                "Time-based SQL Injection via Headers",
-                "Time-based SQL injection vulnerability detected through header injection. The application "
-                + "responded with a delay of " + responseTime + " ms, which suggests that the injected "
-                + "time-based SQL payload was executed. This indicates that user input is being directly "
-                + "incorporated into SQL queries without proper sanitization. "
-                + "Payload: " + sqliPayload,
-                "Fix this vulnerability by properly validating and sanitizing all user input, especially in HTTP headers. "
-                + "Implement proper input validation and use parameterized queries to prevent SQL injection attacks.",
-                interceptedResponse.request().url(),
-                AuditIssueSeverity.HIGH,
-                AuditIssueConfidence.FIRM,
-                "This vulnerability allows attackers to execute arbitrary SQL commands on the database server, "
-                + "potentially leading to data theft, data manipulation, or complete system compromise.",
-                "The application processes user-controlled header values without proper validation or sanitization, "
-                + "allowing SQL injection attacks through HTTP header injection.",
-                AuditIssueSeverity.HIGH,
-                markedEvidence
-            );
-            
-            api.siteMap().add(issue);
-            api.logging().logToOutput("Audit issue created successfully: Time-based SQL Injection via Headers");
-        } catch (Exception e) {
-            api.logging().logToError("Failed to create SQL injection audit issue: " + e.getMessage());
-        }
-        
-        api.logging().logToOutput("═══════════════════════════════════════════════════════════");
-    }
-
-    private void createSensitiveHeaderSqlIssue(HttpRequestResponse response, long responseTime) {
-        api.logging().logToOutput("POSSIBLE SQL INJECTION VIA SENSITIVE HEADERS DETECTED!");
-        api.logging().logToOutput("═══════════════════════════════════════════════════════════");
-        api.logging().logToOutput("Attack Vector: SQL injection via sensitive headers");
-        api.logging().logToOutput("  • URL: " + response.request().url());
-        api.logging().logToOutput("  • Response Time: " + responseTime + " ms");
-        api.logging().logToOutput("  • Expected Sleep Time: " + sqliSleepTime + " seconds");
-        api.logging().logToOutput("Detected: " + new java.util.Date());
-        
-        // Create proper audit issue using the original request with injected headers
-        try {
-            // Get markers for the SQL injection payload in request and response
-            List<Marker> requestMarkers = getRequestMarkersForSqli(response.request(), sqliPayload);
-            List<Marker> responseMarkers = getResponseMarkers(response, sqliPayload);
-            
-            // Add markers to the evidence
-            HttpRequestResponse markedEvidence = response;
-            if (!requestMarkers.isEmpty()) {
-                markedEvidence = markedEvidence.withRequestMarkers(requestMarkers);
-            }
-            if (!responseMarkers.isEmpty()) {
-                markedEvidence = markedEvidence.withResponseMarkers(responseMarkers);
-            }
-            
-            AuditIssue issue = AuditIssue.auditIssue(
-                "Time-based SQL Injection via Sensitive Headers",
-                "Time-based SQL injection vulnerability detected through sensitive header injection. The application "
-                + "responded with a delay of " + responseTime + " ms, which suggests that the injected "
-                + "time-based SQL payload was executed. This indicates that user input from sensitive headers is being "
-                + "directly incorporated into SQL queries without proper sanitization. "
-                + "Payload: " + sqliPayload,
-                "Fix this vulnerability by properly validating and sanitizing all user input, especially in HTTP headers. "
-                + "Implement proper input validation and use parameterized queries to prevent SQL injection attacks.",
-                response.request().url(),
-                AuditIssueSeverity.HIGH,
-                AuditIssueConfidence.FIRM,
-                "This vulnerability allows attackers to execute arbitrary SQL commands on the database server, "
-                + "potentially leading to data theft, data manipulation, or complete system compromise.",
-                "The application processes user-controlled header values without proper validation or sanitization, "
-                + "allowing SQL injection attacks through HTTP header injection.",
-                AuditIssueSeverity.HIGH,
-                markedEvidence
-            );
-            
-            api.siteMap().add(issue);
-            api.logging().logToOutput("Audit issue created successfully: Time-based SQL Injection via Sensitive Headers");
-        } catch (Exception e) {
-            api.logging().logToError("Failed to create SQL injection audit issue: " + e.getMessage());
-        }
-        
-        api.logging().logToOutput("═══════════════════════════════════════════════════════════");
-    }
+    
 
 }
 
