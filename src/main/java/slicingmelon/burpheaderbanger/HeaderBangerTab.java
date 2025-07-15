@@ -130,12 +130,14 @@ public class HeaderBangerTab {
         });
         topPanel.add(addOnlyIfNotExistsCheckBox);
         
-        // Main content panel
-        JPanel mainPanel = new JPanel(new BorderLayout());
+        // Main content panel using BoxLayout for better balance
+        JPanel mainPanel = new JPanel();
+        mainPanel.setLayout(new BoxLayout(mainPanel, BoxLayout.Y_AXIS));
         
-        // Headers section (top)
+        // Headers section (compact)
         JPanel headersSection = new JPanel(new GridLayout(1, 3, 10, 0));
         headersSection.setBorder(BorderFactory.createTitledBorder("Headers Configuration"));
+        headersSection.setMaximumSize(new Dimension(Integer.MAX_VALUE, 200)); // Limit maximum height
         
         // Headers panel
         JPanel headersPanel = createHeadersPanel();
@@ -152,9 +154,14 @@ public class HeaderBangerTab {
         extraHeadersPanel.setBorder(BorderFactory.createTitledBorder("Extra Headers"));
         headersSection.add(extraHeadersPanel);
         
-        // Payloads section (bottom)
+        // Add some spacing
+        mainPanel.add(headersSection);
+        mainPanel.add(Box.createVerticalStrut(15)); // Add spacing between sections
+        
+        // Payloads section (more prominent)
         JPanel payloadsSection = new JPanel(new GridLayout(1, 2, 20, 0));
         payloadsSection.setBorder(BorderFactory.createTitledBorder("Payloads Configuration"));
+        payloadsSection.setMaximumSize(new Dimension(Integer.MAX_VALUE, 150)); // Limit maximum height
         
         // SQLi payload panel
         JPanel sqliPanel = createSqliPayloadPanel();
@@ -166,9 +173,8 @@ public class HeaderBangerTab {
         xssPanel.setBorder(BorderFactory.createTitledBorder("Blind XSS Payload"));
         payloadsSection.add(xssPanel);
         
-        // Add sections to main panel
-        mainPanel.add(headersSection, BorderLayout.CENTER);
-        mainPanel.add(payloadsSection, BorderLayout.SOUTH);
+        mainPanel.add(payloadsSection);
+        mainPanel.add(Box.createVerticalGlue()); // Push everything up
         
         // Add everything to the main panel
         panel.add(topPanel, BorderLayout.NORTH);
@@ -186,7 +192,7 @@ public class HeaderBangerTab {
         headersList = new JList<>(headersListModel);
         headersList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         JScrollPane scrollPane = new JScrollPane(headersList);
-        scrollPane.setPreferredSize(new Dimension(200, 120)); // Reduced from 150 to 120
+        scrollPane.setPreferredSize(new Dimension(200, 80)); // Reduced from 120 to 80
         panel.add(scrollPane, BorderLayout.CENTER);
         
         // Input panel
@@ -234,7 +240,7 @@ public class HeaderBangerTab {
         sensitiveHeadersList = new JList<>(sensitiveHeadersListModel);
         sensitiveHeadersList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         JScrollPane scrollPane = new JScrollPane(sensitiveHeadersList);
-        scrollPane.setPreferredSize(new Dimension(200, 120)); // Reduced from 150 to 120
+        scrollPane.setPreferredSize(new Dimension(200, 80)); // Reduced from 120 to 80
         panel.add(scrollPane, BorderLayout.CENTER);
         
         // Input panel
@@ -362,7 +368,7 @@ public class HeaderBangerTab {
         extraHeadersList = new JList<>(extraHeadersListModel);
         extraHeadersList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         JScrollPane scrollPane = new JScrollPane(extraHeadersList);
-        scrollPane.setPreferredSize(new Dimension(200, 120)); // Reduced from 150 to 120
+        scrollPane.setPreferredSize(new Dimension(200, 80)); // Reduced from 120 to 80
         panel.add(scrollPane, BorderLayout.CENTER);
         
         // Input panel
