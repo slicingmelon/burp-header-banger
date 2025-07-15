@@ -318,6 +318,10 @@ public class BurpHeaderBanger implements BurpExtension {
     }
 
     public void updateInjectedHeaders() {
+        // NOTE: This method is now only used for backward compatibility and legacy functions.
+        // Regular proxy interception now handles headers directly in ProxyHandler.java
+        // This is kept for any remaining code that might reference it.
+        
         injectedHeaders.clear();
         String currentPayload = (attackMode == 1) ? sqliPayload : bxssPayload;
         
@@ -1177,6 +1181,5 @@ public class BurpHeaderBanger implements BurpExtension {
         api.logging().logToOutput("═══════════════════════════════════════════════════════════");
     }
 
-    // Scan check methods and context menu methods now in separate ScanCheck class
 }
 

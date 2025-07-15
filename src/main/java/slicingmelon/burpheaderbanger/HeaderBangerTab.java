@@ -118,33 +118,6 @@ public class HeaderBangerTab {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         
-        // Top panel with extra headers behavior settings
-        JPanel topPanel = new JPanel();
-        topPanel.setLayout(new BoxLayout(topPanel, BoxLayout.Y_AXIS));
-        topPanel.setBorder(BorderFactory.createTitledBorder("Extra Headers Behavior"));
-        
-        JLabel explanationLabel = new JLabel("Configure how extra headers should be handled:");
-        explanationLabel.setFont(explanationLabel.getFont().deriveFont(Font.PLAIN, 12f));
-        topPanel.add(explanationLabel);
-        
-        JLabel noteLabel = new JLabel("Note: These settings only apply to extra headers, not attack headers.");
-        noteLabel.setFont(noteLabel.getFont().deriveFont(Font.ITALIC, 11f));
-        noteLabel.setForeground(Color.GRAY);
-        topPanel.add(noteLabel);
-        
-        // Add if not exists checkbox (enabled by default)
-        JCheckBox addIfNotExistsCheckBox = new JCheckBox("Add extra headers if they don't already exist", true);
-        topPanel.add(addIfNotExistsCheckBox);
-        
-        // Overwrite existing checkbox (disabled by default)
-        JCheckBox overwriteExistingCheckBox = new JCheckBox("Overwrite existing headers if they already exist", extension.isOverwriteExtraHeaders());
-        overwriteExistingCheckBox.addItemListener(e -> {
-            extension.setOverwriteExtraHeaders(e.getStateChange() == ItemEvent.SELECTED);
-            extension.saveSettings();
-            api.logging().logToOutput("Extra headers overwrite mode: " + (extension.isOverwriteExtraHeaders() ? "enabled" : "disabled"));
-        });
-        topPanel.add(overwriteExistingCheckBox);
-        
         // Main content panel using BoxLayout for better balance
         JPanel mainPanel = new JPanel();
         mainPanel.setLayout(new BoxLayout(mainPanel, BoxLayout.Y_AXIS));
@@ -164,10 +137,45 @@ public class HeaderBangerTab {
         sensitiveHeadersPanel.setBorder(BorderFactory.createTitledBorder("Sensitive Headers"));
         headersSection.add(sensitiveHeadersPanel);
         
+        // Extra headers panel with behavior settings on top
+        JPanel extraHeadersContainer = new JPanel(new BorderLayout());
+        extraHeadersContainer.setBorder(BorderFactory.createTitledBorder("Extra Headers"));
+        
+        // Extra headers behavior settings panel
+        JPanel extraHeadersBehaviorPanel = new JPanel();
+        extraHeadersBehaviorPanel.setLayout(new BoxLayout(extraHeadersBehaviorPanel, BoxLayout.Y_AXIS));
+        extraHeadersBehaviorPanel.setBorder(BorderFactory.createTitledBorder("Extra Headers Behavior"));
+        
+        JLabel explanationLabel = new JLabel("Configure how extra headers should be handled:");
+        explanationLabel.setFont(explanationLabel.getFont().deriveFont(Font.PLAIN, 12f));
+        extraHeadersBehaviorPanel.add(explanationLabel);
+        
+        JLabel noteLabel = new JLabel("Note: These settings only apply to extra headers, not attack headers.");
+        noteLabel.setFont(noteLabel.getFont().deriveFont(Font.ITALIC, 11f));
+        noteLabel.setForeground(Color.GRAY);
+        extraHeadersBehaviorPanel.add(noteLabel);
+        
+        // Add if not exists checkbox (enabled by default)
+        JCheckBox addIfNotExistsCheckBox = new JCheckBox("Add extra headers if they don't already exist", true);
+        extraHeadersBehaviorPanel.add(addIfNotExistsCheckBox);
+        
+        // Overwrite existing checkbox (disabled by default)
+        JCheckBox overwriteExistingCheckBox = new JCheckBox("Overwrite existing headers if they already exist", extension.isOverwriteExtraHeaders());
+        overwriteExistingCheckBox.addItemListener(e -> {
+            extension.setOverwriteExtraHeaders(e.getStateChange() == ItemEvent.SELECTED);
+            extension.saveSettings();
+            api.logging().logToOutput("Extra headers overwrite mode: " + (extension.isOverwriteExtraHeaders() ? "enabled" : "disabled"));
+        });
+        extraHeadersBehaviorPanel.add(overwriteExistingCheckBox);
+        
         // Extra headers panel
         JPanel extraHeadersPanel = createExtraHeadersPanel();
-        extraHeadersPanel.setBorder(BorderFactory.createTitledBorder("Extra Headers"));
-        headersSection.add(extraHeadersPanel);
+        
+        // Combine behavior settings with extra headers panel
+        extraHeadersContainer.add(extraHeadersBehaviorPanel, BorderLayout.NORTH);
+        extraHeadersContainer.add(extraHeadersPanel, BorderLayout.CENTER);
+        
+        headersSection.add(extraHeadersContainer);
         
         // Add some spacing
         mainPanel.add(headersSection);
@@ -192,7 +200,6 @@ public class HeaderBangerTab {
         mainPanel.add(Box.createVerticalGlue()); // Push everything up
         
         // Add everything to the main panel
-        panel.add(topPanel, BorderLayout.NORTH);
         panel.add(mainPanel, BorderLayout.CENTER);
         
         return panel;

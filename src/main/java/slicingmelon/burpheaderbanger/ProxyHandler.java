@@ -193,31 +193,45 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
     }
     
     private HttpRequest injectSqlInjectionPayloads(HttpRequest request) {
-        List<HttpHeader> originalHeaders = request.headers();
-        List<String> headersToAdd = new ArrayList<>();
+        List<HttpHeader> modifiedHeaders = new ArrayList<>(request.headers());
         
-        // Get base headers (exclude injected ones only)
-        List<HttpHeader> baseHeaders = new ArrayList<>();
-        for (HttpHeader header : originalHeaders) {
-            if (!extension.getHeaders().contains(header.name())) {
-                baseHeaders.add(header);
+        api.logging().logToOutput("Injecting SQL injection payloads for request: " + request.url());
+        
+        // Process ALL headers from the Headers list (both existing and non-existing)
+        for (String headerName : extension.getHeaders()) {
+            String finalPayload;
+            
+            if ("User-Agent".equalsIgnoreCase(headerName)) {
+                // For User-Agent, use Mozilla prefix with payload
+                finalPayload = "Mozilla/5.0" + extension.getSqliPayload();
+            } else if ("Referer".equalsIgnoreCase(headerName)) {
+                // For Referer, append payload to original value or use URL
+                String originalReferer = request.headerValue("Referer");
+                if (originalReferer == null) originalReferer = request.url();
+                finalPayload = originalReferer + extension.getSqliPayload();
+            } else {
+                // For other headers, use "1" prefix with payload
+                finalPayload = "1" + extension.getSqliPayload();
+            }
+            
+            // Replace existing header or add new one
+            boolean headerFoundAndReplaced = false;
+            for (int i = 0; i < modifiedHeaders.size(); i++) {
+                if (modifiedHeaders.get(i).name().equalsIgnoreCase(headerName)) {
+                    modifiedHeaders.set(i, HttpHeader.httpHeader(headerName, finalPayload));
+                    headerFoundAndReplaced = true;
+                    break;
+                }
+            }
+            if (!headerFoundAndReplaced) {
+                modifiedHeaders.add(HttpHeader.httpHeader(headerName, finalPayload));
+                api.logging().logToOutput("Added new header: " + headerName + " = " + finalPayload);
+            } else {
+                api.logging().logToOutput("Replaced existing header: " + headerName + " = " + finalPayload);
             }
         }
-
-        // Handle Referer header separately
-        String refererValue = getHeaderValue(originalHeaders, "Referer");
         
-        // Add injected headers
-        headersToAdd.addAll(extension.getInjectedHeaders());
-        
-        // Add modified Referer if it was present
-        if (refererValue != null && extension.getHeaders().contains("Referer")) {
-            String currentPayload = extension.getSqliPayload();
-            headersToAdd.add("Referer: " + refererValue + currentPayload);
-        }
-        
-        List<HttpHeader> newHeaders = addOrReplaceHeaders(baseHeaders, headersToAdd);
-        HttpRequest workingRequest = request.withUpdatedHeaders(newHeaders);
+        HttpRequest workingRequest = request.withUpdatedHeaders(modifiedHeaders);
         
         // Add extra headers using the proper API method
         for (String extraHeader : extension.getExtraHeaders()) {
