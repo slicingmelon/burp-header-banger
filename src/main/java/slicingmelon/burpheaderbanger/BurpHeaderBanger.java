@@ -89,10 +89,15 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     
     // Default headers
     private static final List<String> DEFAULT_HEADERS = Arrays.asList(
-            "User-Agent", "Referer", "X-Forwarded-For", "X-Originating-IP",
-            "X-Forwarded", "Forwarded-For", "X-Remote-IP", "X-Remote-Addr",
-            "X-ProxyUser-Ip", "Client-IP", "X-Client-IP", "True-Client-IP",
-            "Cluster-Client-IP"
+            "X-Forwarded-For",
+            "X-Real-IP",
+            "Forwarded",
+            "True-Client-IP",
+            "X-Client-IP",
+            "X-Cluster-Client-IP",
+            "X-Originating-IP",
+            "CF-Connecting-IP",
+            "Fastly-Client-IP"
     );
     
     private static final List<String> DEFAULT_SENSITIVE_HEADERS = Arrays.asList(
