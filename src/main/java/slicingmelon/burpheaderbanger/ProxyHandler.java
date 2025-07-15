@@ -132,8 +132,11 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         List<HttpHeader> modifiedHeaders = new ArrayList<>(request.headers());
         
         api.logging().logToOutput("Injecting XSS payloads for request: " + request.url());
+        api.logging().logToOutput("XSS - Headers to process: " + extension.getHeaders());
+        api.logging().logToOutput("XSS - Headers count: " + extension.getHeaders().size());
         
         for (String headerName : extension.getHeaders()) {
+            api.logging().logToOutput("XSS - Processing header: " + headerName);
             CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
             String payloadDomain = collabPayload.toString();
 
@@ -196,9 +199,12 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         List<HttpHeader> modifiedHeaders = new ArrayList<>(request.headers());
         
         api.logging().logToOutput("Injecting SQL injection payloads for request: " + request.url());
+        api.logging().logToOutput("Headers to process: " + extension.getHeaders());
+        api.logging().logToOutput("Headers count: " + extension.getHeaders().size());
         
         // Process ALL headers from the Headers list (both existing and non-existing)
         for (String headerName : extension.getHeaders()) {
+            api.logging().logToOutput("Processing header: " + headerName);
             String finalPayload;
             
             if ("User-Agent".equalsIgnoreCase(headerName)) {
