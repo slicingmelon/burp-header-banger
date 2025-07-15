@@ -361,13 +361,19 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     }
 
     private void startCollaboratorPolling() {
+        api.logging().logToOutput("Starting collaborator polling every 10 seconds...");
+        
         scheduler.scheduleWithFixedDelay(() -> {
             try {
+                api.logging().logToOutput("Polling collaborator for interactions...");
+                
                 List<Interaction> interactions = collaboratorClient.getAllInteractions();
                 
-                // Debug logging
-                if (!interactions.isEmpty()) {
-                    api.logging().logToOutput("Collaborator polling: Found " + interactions.size() + " interactions");
+                api.logging().logToOutput("Collaborator polling: Found " + interactions.size() + " interactions");
+                api.logging().logToOutput("Current payload map size: " + payloadMap.size());
+                
+                if (payloadMap.size() > 0) {
+                    api.logging().logToOutput("Payload map contents: " + payloadMap.keySet());
                 }
                 
                 for (Interaction interaction : interactions) {
@@ -401,10 +407,13 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                         api.logging().logToOutput("No matching domain found for interaction: " + interaction.id().toString());
                     }
                 }
+                
+                api.logging().logToOutput("Collaborator polling completed.");
             } catch (Exception e) {
                 api.logging().logToError("Error polling collaborator: " + e.getMessage());
+                e.printStackTrace();
             }
-        }, 30, 30, TimeUnit.SECONDS);
+        }, 10, 10, TimeUnit.SECONDS);  // Changed from 30 to 10 seconds
 
         // Add a cleanup task for old payloads in the map
         scheduler.scheduleWithFixedDelay(() -> {
@@ -667,6 +676,13 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
 
         HttpRequest request = interceptedRequest;
         
+        // IMPORTANT: Skip modification for requests going to the collaborator server
+        // This prevents interference with collaborator interactions
+        if (collaboratorServerLocation != null && request.url().contains(collaboratorServerLocation)) {
+            api.logging().logToOutput("Skipping collaborator request: " + request.url());
+            return ProxyRequestReceivedAction.continueWith(interceptedRequest);
+        }
+        
         // Check if only processing in-scope items
         if (onlyInScopeItems && !api.scope().isInScope(request.url())) {
             return ProxyRequestReceivedAction.continueWith(interceptedRequest);
@@ -739,6 +755,8 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     private HttpRequest injectUniqueXssPayloads(HttpRequest request) {
         List<HttpHeader> modifiedHeaders = new ArrayList<>(request.headers());
         
+        api.logging().logToOutput("Injecting XSS payloads for request: " + request.url());
+        
         for (String headerName : headers) {
             CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
             String payloadDomain = collabPayload.toString();
@@ -755,7 +773,10 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             }
 
             // Create and store correlation
-            payloadMap.put(payloadDomain, new PayloadCorrelation(request.url(), headerName, request.method()));
+            PayloadCorrelation correlation = new PayloadCorrelation(request.url(), headerName, request.method());
+            payloadMap.put(payloadDomain, correlation);
+            
+            api.logging().logToOutput("Added payload to map: " + payloadDomain + " -> " + headerName + " for " + request.url());
 
             // Overwrite header
             boolean headerFoundAndReplaced = false;
@@ -770,6 +791,8 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                 modifiedHeaders.add(HttpHeader.httpHeader(headerName, finalPayload));
             }
         }
+        
+        api.logging().logToOutput("Total payloads in map after injection: " + payloadMap.size());
         
         // Add extra headers as well, without payloads
         return request.withUpdatedHeaders(addOrReplaceHeaders(modifiedHeaders, extraHeaders));
@@ -836,13 +859,18 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     private void processSensitiveHeadersScan(InterceptedResponse interceptedResponse) {
         HttpRequest originalRequest = interceptedResponse.request();
         
+        api.logging().logToOutput("Processing sensitive headers scan for: " + originalRequest.url());
+        
         // Get host value
         String hostValue = getHeaderValue(originalRequest.headers(), "Host");
         if (hostValue == null) {
+            api.logging().logToOutput("No Host header found, skipping sensitive headers scan");
             return;
         }
 
         if (attackMode == 2) {
+            api.logging().logToOutput("Processing BXSS for sensitive headers");
+            
             // BXSS logic for sensitive headers
             List<HttpHeader> modifiedHeaders = new ArrayList<>(originalRequest.headers());
             
@@ -852,7 +880,10 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                 String finalPayload = hostValue + bxssPayload.replace("{{collaborator}}", payloadDomain);
                 
                 // Store correlation for this payload
-                payloadMap.put(payloadDomain, new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method()));
+                PayloadCorrelation correlation = new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method());
+                payloadMap.put(payloadDomain, correlation);
+                
+                api.logging().logToOutput("Added sensitive header payload to map: " + payloadDomain + " -> " + sensitiveHeader + " for " + originalRequest.url());
                 
                 // Add or replace the sensitive header
                 boolean headerFoundAndReplaced = false;
@@ -871,10 +902,15 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             // Add extra headers
             HttpRequest finalRequest = originalRequest.withUpdatedHeaders(addOrReplaceHeaders(modifiedHeaders, extraHeaders));
             
+            api.logging().logToOutput("Sending sensitive headers request with " + sensitiveHeaders.size() + " sensitive headers");
+            api.logging().logToOutput("Total payloads in map after sensitive headers: " + payloadMap.size());
+            
             // Send and forget, collaborator will catch it
             api.http().sendRequest(finalRequest);
             return;
         }
+        
+        api.logging().logToOutput("Processing SQL injection for sensitive headers");
         
         // SQL injection logic for sensitive headers
         List<String> headersToAdd = new ArrayList<>();
@@ -895,6 +931,8 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             HttpRequestResponse response = api.http().sendRequest(modifiedRequest);
             long endTime = System.currentTimeMillis();
             long responseTime = endTime - startTime;
+
+            api.logging().logToOutput("Sensitive headers SQL injection response time: " + responseTime + " ms");
 
             if (responseTime >= sqliSleepTime * 1000) {
                 createSensitiveHeaderSqlIssue(response, responseTime);
@@ -1000,6 +1038,8 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     private void scanSelectedRequest(ContextMenuEvent event) {
         Optional<HttpRequestResponse> selectedMessage = event.selectedRequestResponses().stream().findFirst();
         if (selectedMessage.isPresent()) {
+            api.logging().logToOutput("Context menu scan initiated for: " + selectedMessage.get().request().url());
+            
             // Create a simplified sensitive headers scan for context menu
             scheduler.execute(() -> {
                 HttpRequest originalRequest = selectedMessage.get().request();
@@ -1007,6 +1047,8 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                 
                 if (hostValue != null) {
                     if (attackMode == 2) {
+                        api.logging().logToOutput("Context menu: Processing BXSS for sensitive headers");
+                        
                         // BXSS logic for context menu
                         List<HttpHeader> modifiedHeaders = new ArrayList<>(originalRequest.headers());
                         
@@ -1016,7 +1058,10 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                             String finalPayload = hostValue + bxssPayload.replace("{{collaborator}}", payloadDomain);
                             
                             // Store correlation for this payload
-                            payloadMap.put(payloadDomain, new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method()));
+                            PayloadCorrelation correlation = new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method());
+                            payloadMap.put(payloadDomain, correlation);
+                            
+                            api.logging().logToOutput("Context menu: Added payload to map: " + payloadDomain + " -> " + sensitiveHeader);
                             
                             // Add or replace the sensitive header
                             boolean headerFoundAndReplaced = false;
@@ -1034,11 +1079,17 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                         
                         // Add extra headers
                         HttpRequest finalRequest = originalRequest.withUpdatedHeaders(addOrReplaceHeaders(modifiedHeaders, extraHeaders));
+                        
+                        api.logging().logToOutput("Context menu: Sending request with " + sensitiveHeaders.size() + " sensitive headers");
+                        api.logging().logToOutput("Context menu: Total payloads in map: " + payloadMap.size());
+                        
                         api.http().sendRequest(finalRequest);
                         api.logging().logToOutput("Context menu scan: Sent BXSS probes for sensitive headers for URL: " + originalRequest.url());
                         return;
                     }
 
+                    api.logging().logToOutput("Context menu: Processing SQL injection for sensitive headers");
+                    
                     // SQLi logic for sensitive headers
                     List<String> headersToAdd = new ArrayList<>();
                     
@@ -1066,6 +1117,8 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                     } catch (Exception e) {
                         api.logging().logToError("Error in context menu scan: " + e.getMessage());
                     }
+                } else {
+                    api.logging().logToOutput("Context menu: No Host header found for " + originalRequest.url());
                 }
             });
         }
