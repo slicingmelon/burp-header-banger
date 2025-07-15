@@ -82,10 +82,10 @@ public class HeaderBangerTab {
         attackModePanel.add(new JLabel("Select the attack mode:"));
         
         sqliButton = new JButton("Blind SQL Injection");
-        sqliButton.addActionListener(e -> setAttackMode(1));
+        sqliButton.addActionListener(_ -> setAttackMode(1));
         
         xssButton = new JButton("Blind XSS");
-        xssButton.addActionListener(e -> setAttackMode(2));
+        xssButton.addActionListener(_ -> setAttackMode(2));
         
         attackModePanel.add(sqliButton);
         attackModePanel.add(xssButton);
@@ -198,7 +198,7 @@ public class HeaderBangerTab {
         // Input panel
         JPanel inputPanel = new JPanel(new BorderLayout());
         newHeaderField = new JTextField();
-        newHeaderField.addActionListener(e -> addHeader()); // Allow Enter key to add
+        newHeaderField.addActionListener(_ -> addHeader()); // Allow Enter key to add
         inputPanel.add(new JLabel("New header:"), BorderLayout.WEST);
         inputPanel.add(newHeaderField, BorderLayout.CENTER);
         
@@ -206,19 +206,19 @@ public class HeaderBangerTab {
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 0));
         
         JButton addButton = new JButton("Add");
-        addButton.addActionListener(e -> addHeader());
+        addButton.addActionListener(_ -> addHeader());
         buttonPanel.add(addButton);
         
         JButton deleteButton = new JButton("Delete");
-        deleteButton.addActionListener(e -> deleteHeader());
+        deleteButton.addActionListener(_ -> deleteHeader());
         buttonPanel.add(deleteButton);
         
         JButton clearButton = new JButton("Clear");
-        clearButton.addActionListener(e -> clearHeaders());
+        clearButton.addActionListener(_ -> clearHeaders());
         buttonPanel.add(clearButton);
         
         JButton defaultButton = new JButton("Default");
-        defaultButton.addActionListener(e -> setDefaultHeaders());
+        defaultButton.addActionListener(_ -> setDefaultHeaders());
         buttonPanel.add(defaultButton);
         
         // Controls panel
@@ -246,7 +246,7 @@ public class HeaderBangerTab {
         // Input panel
         JPanel inputPanel = new JPanel(new BorderLayout());
         newSensitiveHeaderField = new JTextField();
-        newSensitiveHeaderField.addActionListener(e -> addSensitiveHeader()); // Allow Enter key to add
+        newSensitiveHeaderField.addActionListener(_ -> addSensitiveHeader()); // Allow Enter key to add
         inputPanel.add(new JLabel("New header:"), BorderLayout.WEST);
         inputPanel.add(newSensitiveHeaderField, BorderLayout.CENTER);
         
@@ -254,19 +254,19 @@ public class HeaderBangerTab {
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 0));
         
         JButton addButton = new JButton("Add");
-        addButton.addActionListener(e -> addSensitiveHeader());
+        addButton.addActionListener(_ -> addSensitiveHeader());
         buttonPanel.add(addButton);
         
         JButton deleteButton = new JButton("Delete");
-        deleteButton.addActionListener(e -> deleteSensitiveHeader());
+        deleteButton.addActionListener(_ -> deleteSensitiveHeader());
         buttonPanel.add(deleteButton);
         
         JButton clearButton = new JButton("Clear");
-        clearButton.addActionListener(e -> clearSensitiveHeaders());
+        clearButton.addActionListener(_ -> clearSensitiveHeaders());
         buttonPanel.add(clearButton);
         
         JButton defaultButton = new JButton("Default");
-        defaultButton.addActionListener(e -> setDefaultSensitiveHeaders());
+        defaultButton.addActionListener(_ -> setDefaultSensitiveHeaders());
         buttonPanel.add(defaultButton);
         
         // Controls panel
@@ -304,11 +304,11 @@ public class HeaderBangerTab {
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 5));
         
         JButton saveButton = new JButton("Save Payload");
-        saveButton.addActionListener(e -> saveSqliPayload());
+        saveButton.addActionListener(_ -> saveSqliPayload());
         buttonPanel.add(saveButton);
         
         JButton defaultButton = new JButton("Reset to Default");
-        defaultButton.addActionListener(e -> setDefaultSqliPayload());
+        defaultButton.addActionListener(_ -> setDefaultSqliPayload());
         buttonPanel.add(defaultButton);
         
         // Assembly
@@ -344,11 +344,11 @@ public class HeaderBangerTab {
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 5));
         
         JButton saveButton = new JButton("Save Payload");
-        saveButton.addActionListener(e -> saveBxssPayload());
+        saveButton.addActionListener(_ -> saveBxssPayload());
         buttonPanel.add(saveButton);
         
         JButton defaultButton = new JButton("Reset to Default");
-        defaultButton.addActionListener(e -> setDefaultBxssPayload());
+        defaultButton.addActionListener(_ -> setDefaultBxssPayload());
         buttonPanel.add(defaultButton);
         
         // Assembly
@@ -374,7 +374,7 @@ public class HeaderBangerTab {
         // Input panel
         JPanel inputPanel = new JPanel(new BorderLayout());
         newExtraHeaderField = new JTextField();
-        newExtraHeaderField.addActionListener(e -> addExtraHeader()); // Allow Enter key to add
+        newExtraHeaderField.addActionListener(_ -> addExtraHeader()); // Allow Enter key to add
         inputPanel.add(new JLabel("New header:"), BorderLayout.WEST);
         inputPanel.add(newExtraHeaderField, BorderLayout.CENTER);
         
@@ -382,15 +382,15 @@ public class HeaderBangerTab {
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 0));
         
         JButton addButton = new JButton("Add");
-        addButton.addActionListener(e -> addExtraHeader());
+        addButton.addActionListener(_ -> addExtraHeader());
         buttonPanel.add(addButton);
         
         JButton deleteButton = new JButton("Delete");
-        deleteButton.addActionListener(e -> deleteExtraHeader());
+        deleteButton.addActionListener(_ -> deleteExtraHeader());
         buttonPanel.add(deleteButton);
         
         JButton clearButton = new JButton("Clear");
-        clearButton.addActionListener(e -> clearExtraHeaders());
+        clearButton.addActionListener(_ -> clearExtraHeaders());
         buttonPanel.add(clearButton);
         
         // Controls panel
@@ -416,15 +416,15 @@ public class HeaderBangerTab {
         controlsPanel.add(newHostField);
         
         JButton addButton = new JButton("Add");
-        addButton.addActionListener(e -> addHost());
+        addButton.addActionListener(_ -> addHost());
         controlsPanel.add(addButton);
         
         JButton deleteButton = new JButton("Delete");
-        deleteButton.addActionListener(e -> deleteHost());
+        deleteButton.addActionListener(_ -> deleteHost());
         controlsPanel.add(deleteButton);
         
         JButton clearButton = new JButton("Clear");
-        clearButton.addActionListener(e -> clearHosts());
+        clearButton.addActionListener(_ -> clearHosts());
         controlsPanel.add(clearButton);
         
         panel.add(controlsPanel, BorderLayout.SOUTH);

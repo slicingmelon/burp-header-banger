@@ -598,11 +598,11 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         List<Component> menuItems = new ArrayList<>();
         
         JMenuItem scanItem = new JMenuItem("Scan this request with Header Banger");
-        scanItem.addActionListener(e -> scanSelectedRequest(event));
+        scanItem.addActionListener(_ -> scanSelectedRequest(event));
         menuItems.add(scanItem);
         
         JMenuItem excludeHostItem = new JMenuItem("Exclude Host from Header Banger scans");
-        excludeHostItem.addActionListener(e -> excludeHostFromScans(event));
+        excludeHostItem.addActionListener(_ -> excludeHostFromScans(event));
         menuItems.add(excludeHostItem);
         
         return menuItems;
