@@ -71,7 +71,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     private CollaboratorClient collaboratorClient;
     private ScheduledExecutorService scheduler;
     private String collaboratorServerLocation;
-    private String collaboratorSecretKey;
+
     
     // Settings
     private boolean extensionActive = true;
@@ -177,23 +177,36 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     }
 
     private void initializeCollaboratorClient() {
-        // Get existing secret key from persistence
-        String existingCollaboratorKey = persistedObject.getString("collaboratorSecretKey");
-        
-        if (existingCollaboratorKey != null) {
-            api.logging().logToOutput("Creating Collaborator client from existing key");
-            this.collaboratorClient = api.collaborator().restoreClient(SecretKey.secretKey(existingCollaboratorKey));
-        } else {
-            api.logging().logToOutput("No previously found Collaborator client. Creating new client...");
-            this.collaboratorClient = api.collaborator().createClient();
+        try {
+            // Get existing secret key from persistence
+            String existingCollaboratorKey = persistedObject.getString("collaboratorSecretKey");
             
-            // Save the secret key of the CollaboratorClient so that you can retrieve it later
-            api.logging().logToOutput("Saving Collaborator secret key");
-            persistedObject.setString("collaboratorSecretKey", this.collaboratorClient.getSecretKey().toString());
+            if (existingCollaboratorKey != null && !existingCollaboratorKey.isEmpty()) {
+                try {
+                    api.logging().logToOutput("Creating Collaborator client from existing key");
+                    this.collaboratorClient = api.collaborator().restoreClient(SecretKey.secretKey(existingCollaboratorKey));
+                } catch (Exception e) {
+                    api.logging().logToOutput("Failed to restore collaborator client, creating new one: " + e.getMessage());
+                    this.collaboratorClient = api.collaborator().createClient();
+                    persistedObject.setString("collaboratorSecretKey", this.collaboratorClient.getSecretKey().toString());
+                }
+            } else {
+                api.logging().logToOutput("No previously found Collaborator client. Creating new client...");
+                this.collaboratorClient = api.collaborator().createClient();
+                
+                // Save the secret key of the CollaboratorClient so that you can retrieve it later
+                api.logging().logToOutput("Saving Collaborator secret key");
+                persistedObject.setString("collaboratorSecretKey", this.collaboratorClient.getSecretKey().toString());
+            }
+            
+            this.collaboratorServerLocation = this.collaboratorClient.generatePayload().toString().split("\\.", 2)[1];
+            api.logging().logToOutput("Collaborator client initialized successfully");
+        } catch (Exception e) {
+            api.logging().logToError("Failed to initialize collaborator client: " + e.getMessage());
+            // Fallback to creating a new client
+            this.collaboratorClient = api.collaborator().createClient();
+            this.collaboratorServerLocation = this.collaboratorClient.generatePayload().toString().split("\\.", 2)[1];
         }
-        
-        this.collaboratorServerLocation = this.collaboratorClient.generatePayload().toString().split("\\.", 2)[1];
-        api.logging().logToOutput("Collaborator client initialized successfully");
     }
     
 
@@ -343,24 +356,32 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             }
         }
         
-        // Add extra headers
-        injectedHeaders.addAll(extraHeaders);
+        // Note: Extra headers are NOT added here - they should be added separately 
+        // without any payload injection in the request modification methods
     }
 
     private void startCollaboratorPolling() {
         scheduler.scheduleWithFixedDelay(() -> {
             try {
                 List<Interaction> interactions = collaboratorClient.getAllInteractions();
+                
+                // Debug logging
+                if (!interactions.isEmpty()) {
+                    api.logging().logToOutput("Collaborator polling: Found " + interactions.size() + " interactions");
+                }
+                
                 for (Interaction interaction : interactions) {
+                    api.logging().logToOutput("Processing interaction: " + interaction.id().toString());
+                    
                     String interactionDomain = findDomainInInteraction(interaction);
                     if (interactionDomain != null) {
                         PayloadCorrelation correlation = payloadMap.get(interactionDomain);
                         if (correlation != null) {
-                            api.logging().logToOutput("🚀 SUCCESSFUL XSS DETECTED! 🚀");
+                            api.logging().logToOutput("SUCCESSFUL XSS DETECTED!");
                             api.logging().logToOutput("═══════════════════════════════════════════════════════════");
                             
                             // Log detailed interaction information
-                            api.logging().logToOutput("📋 Interaction Details:");
+                            api.logging().logToOutput("Interaction Details:");
                             api.logging().logToOutput("  • URL: " + correlation.requestUrl);
                             api.logging().logToOutput("  • Method: " + correlation.requestMethod);
                             api.logging().logToOutput("  • Header: " + correlation.headerName);
@@ -368,12 +389,16 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                             
                             api.logging().logToOutput("═══════════════════════════════════════════════════════════");
                             
-                            // Create XSS issue
-                            createXssIssue(interaction, correlation);
+                            // Create XSS issue using proxy history
+                            createXssIssueFromProxyHistory(interaction, correlation);
                             
                             // Clean up the map
                             payloadMap.remove(interactionDomain);
+                        } else {
+                            api.logging().logToOutput("Found interaction domain but no correlation: " + interactionDomain);
                         }
+                    } else {
+                        api.logging().logToOutput("No matching domain found for interaction: " + interaction.id().toString());
                     }
                 }
             } catch (Exception e) {
@@ -384,76 +409,154 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         // Add a cleanup task for old payloads in the map
         scheduler.scheduleWithFixedDelay(() -> {
             long now = System.currentTimeMillis();
-            payloadMap.entrySet().removeIf(entry -> (now - entry.getValue().timestamp) > TimeUnit.MINUTES.toMillis(15));
+            int removedCount = 0;
+            Iterator<Map.Entry<String, PayloadCorrelation>> iterator = payloadMap.entrySet().iterator();
+            while (iterator.hasNext()) {
+                Map.Entry<String, PayloadCorrelation> entry = iterator.next();
+                if ((now - entry.getValue().timestamp) > TimeUnit.MINUTES.toMillis(15)) {
+                    iterator.remove();
+                    removedCount++;
+                }
+            }
+            if (removedCount > 0) {
+                api.logging().logToOutput("Cleaned up " + removedCount + " old payloads from map");
+            }
         }, 15, 15, TimeUnit.MINUTES);
     }
 
     private String findDomainInInteraction(Interaction interaction) {
-        String collaboratorHost = this.collaboratorServerLocation;
-        
-        // Check HTTP interactions
-        Optional<String> domainFromHttp = interaction.httpDetails()
-                .map(http -> {
-                    // Extract domain from the interaction ID or URL
-                    String interactionId = interaction.id().toString();
-                    if (interactionId.endsWith("." + collaboratorHost)) {
-                        return interactionId;
-                    }
-                    return null;
-                });
-                
-        if (domainFromHttp.isPresent() && domainFromHttp.get() != null) {
-            return domainFromHttp.get();
-        }
-        
-        // Check DNS interactions
-        Optional<String> domainFromDns = interaction.dnsDetails()
-                .map(DnsDetails::query)
-                .map(ByteArray::toString);
-                
-        if (domainFromDns.isPresent() && domainFromDns.get().endsWith("." + collaboratorHost)) {
-            String dnsQuery = domainFromDns.get();
-            return dnsQuery.substring(0, dnsQuery.length() - 1); // remove trailing dot
-        }
-
-        // Fallback: extract domain from interaction ID
         String interactionId = interaction.id().toString();
-        if (interactionId.endsWith("." + collaboratorHost)) {
+        
+        // First, try to directly match the interaction ID with our payload map keys
+        if (payloadMap.containsKey(interactionId)) {
             return interactionId;
         }
-
+        
+        // If that doesn't work, check if the interaction ID is a subdomain of any of our stored payloads
+        for (String payloadDomain : payloadMap.keySet()) {
+            if (interactionId.equals(payloadDomain)) {
+                return payloadDomain;
+            }
+        }
+        
+        // For HTTP interactions, check if the interaction ID contains our collaborator domain
+        if (interaction.httpDetails().isPresent()) {
+            String collaboratorHost = this.collaboratorServerLocation;
+            if (interactionId.endsWith("." + collaboratorHost)) {
+                // Check if this matches any of our stored payloads
+                for (String payloadDomain : payloadMap.keySet()) {
+                    if (payloadDomain.equals(interactionId)) {
+                        return payloadDomain;
+                    }
+                }
+            }
+        }
+        
+        // For DNS interactions, check the query
+        if (interaction.dnsDetails().isPresent()) {
+            String dnsQuery = interaction.dnsDetails().get().query().toString();
+            // Remove trailing dot if present
+            if (dnsQuery.endsWith(".")) {
+                dnsQuery = dnsQuery.substring(0, dnsQuery.length() - 1);
+            }
+            
+            // Check if this matches any of our stored payloads
+            for (String payloadDomain : payloadMap.keySet()) {
+                if (payloadDomain.equals(dnsQuery)) {
+                    return payloadDomain;
+                }
+            }
+        }
+        
+        // Debug logging
+        api.logging().logToOutput("No matching payload found for interaction ID: " + interactionId);
+        api.logging().logToOutput("Available payload domains: " + payloadMap.keySet());
+        
         return null;
     }
 
-    private void createXssIssue(Interaction interaction, PayloadCorrelation correlation) {
-        // Enhanced XSS issue creation with more context
-        api.logging().logToOutput("💥 XSS VULNERABILITY CONFIRMED!");
-        api.logging().logToOutput("🎯 Attack Vector: Header injection via " + correlation.headerName);
+    private void createXssIssueFromProxyHistory(Interaction interaction, PayloadCorrelation correlation) {
+        api.logging().logToOutput("XSS VULNERABILITY CONFIRMED!");
+        api.logging().logToOutput("Attack Vector: Header injection via " + correlation.headerName);
         api.logging().logToOutput("  • URL: " + correlation.requestUrl);
         api.logging().logToOutput("  • Method: " + correlation.requestMethod);
-        api.logging().logToOutput("⚡ Impact: Cross-Site Scripting (XSS) execution detected");
-        api.logging().logToOutput("🕐 Detected: " + new java.util.Date());
-        api.logging().logToOutput("📊 Interaction ID: " + interaction.id());
+        api.logging().logToOutput("Impact: Cross-Site Scripting (XSS) execution detected");
+        api.logging().logToOutput("Detected: " + new java.util.Date());
+        api.logging().logToOutput("Interaction ID: " + interaction.id());
         
-        // Create proper Burp audit issue
-        try {
-            createAuditIssue(
-                "Header Injection XSS via " + correlation.headerName,
-                "Cross-Site Scripting (XSS) vulnerability detected through header injection in the " 
-                + correlation.headerName + " header. The payload was successfully executed as confirmed by "
-                + "collaborator interaction " + interaction.id() + ". This allows attackers to inject arbitrary "
-                + "JavaScript code that will be executed in the context of other users' browsers.",
-                correlation.requestUrl,
-                AuditIssueSeverity.HIGH,
-                AuditIssueConfidence.CERTAIN
-            );
-        } catch (Exception e) {
-            api.logging().logToError("Failed to create audit issue: " + e.getMessage());
+        // Find the original request from proxy history using interaction ID
+        String interactionId = interaction.id().toString();
+        List<burp.api.montoya.proxy.ProxyHttpRequestResponse> proxyHistory = api.proxy().history(
+            requestResponse -> requestResponse.finalRequest().toString().contains(interactionId)
+        );
+        
+        if (!proxyHistory.isEmpty()) {
+            // Use the first matching request from proxy history
+            burp.api.montoya.proxy.ProxyHttpRequestResponse originalRequestResponse = proxyHistory.get(0);
+            
+            try {
+                // Create audit issue using the original request/response from proxy history
+                AuditIssue issue = AuditIssue.auditIssue(
+                    "Header Injection XSS via " + correlation.headerName,
+                    "Cross-Site Scripting (XSS) vulnerability detected through header injection in the " 
+                    + correlation.headerName + " header. The payload was successfully executed as confirmed by "
+                    + "collaborator interaction " + interaction.id() + ". This allows attackers to inject arbitrary "
+                    + "JavaScript code that will be executed in the context of other users' browsers.",
+                    "Fix this vulnerability by properly validating and sanitizing all user input, especially in HTTP headers. "
+                    + "Implement proper output encoding when reflecting user-controlled data in responses.",
+                    originalRequestResponse.finalRequest().url(),
+                    AuditIssueSeverity.HIGH,
+                    AuditIssueConfidence.CERTAIN,
+                    "This vulnerability allows attackers to execute arbitrary JavaScript in the victim's browser, "
+                    + "potentially leading to session hijacking, defacement, or other malicious activities.",
+                    "The application reflects user-controlled header values without proper validation or encoding, "
+                    + "allowing XSS attacks through HTTP header injection.",
+                    AuditIssueSeverity.HIGH,
+                    HttpRequestResponse.httpRequestResponse(originalRequestResponse.finalRequest(), originalRequestResponse.originalResponse())
+                );
+                
+                api.siteMap().add(issue);
+                api.logging().logToOutput("Audit issue created successfully: Header Injection XSS via " + correlation.headerName);
+            } catch (Exception e) {
+                api.logging().logToError("Failed to create audit issue: " + e.getMessage());
+            }
+        } else {
+            api.logging().logToOutput("Could not find original request in proxy history for interaction: " + interactionId);
+            
+            // Fallback to the old method if proxy history doesn't contain the request
+            try {
+                HttpRequest issueRequest = HttpRequest.httpRequestFromUrl(correlation.requestUrl);
+                HttpRequestResponse issueRequestResponse = api.http().sendRequest(issueRequest);
+                
+                AuditIssue issue = AuditIssue.auditIssue(
+                    "Header Injection XSS via " + correlation.headerName,
+                    "Cross-Site Scripting (XSS) vulnerability detected through header injection in the " 
+                    + correlation.headerName + " header. The payload was successfully executed as confirmed by "
+                    + "collaborator interaction " + interaction.id() + ". This allows attackers to inject arbitrary "
+                    + "JavaScript code that will be executed in the context of other users' browsers.",
+                    "Fix this vulnerability by properly validating and sanitizing all user input, especially in HTTP headers. "
+                    + "Implement proper output encoding when reflecting user-controlled data in responses.",
+                    correlation.requestUrl,
+                    AuditIssueSeverity.HIGH,
+                    AuditIssueConfidence.CERTAIN,
+                    "This vulnerability allows attackers to execute arbitrary JavaScript in the victim's browser, "
+                    + "potentially leading to session hijacking, defacement, or other malicious activities.",
+                    "The application reflects user-controlled header values without proper validation or encoding, "
+                    + "allowing XSS attacks through HTTP header injection.",
+                    AuditIssueSeverity.HIGH,
+                    issueRequestResponse
+                );
+                
+                api.siteMap().add(issue);
+                api.logging().logToOutput("Audit issue created successfully (fallback): Header Injection XSS via " + correlation.headerName);
+            } catch (Exception e) {
+                api.logging().logToError("Failed to create fallback audit issue: " + e.getMessage());
+            }
         }
         
         api.logging().logToOutput("───────────────────────────────────────────────────────────");
     }
-    
+
     private void createAuditIssue(String issueName, String issueDetail, String requestUrl, 
                                   AuditIssueSeverity severity, AuditIssueConfidence confidence) {
         try {
@@ -478,7 +581,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             // Add the issue to Burp's issue list
             api.siteMap().add(issue);
             
-            api.logging().logToOutput("✅ Audit issue created successfully: " + issueName);
+            api.logging().logToOutput("Audit issue created successfully: " + issueName);
         } catch (Exception e) {
             api.logging().logToError("Failed to create audit issue: " + e.getMessage());
         }
@@ -646,9 +749,9 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             } else if ("Referer".equalsIgnoreCase(headerName)) {
                 String originalReferer = request.headerValue("Referer");
                 if (originalReferer == null) originalReferer = request.url();
-                finalPayload = originalReferer + bxssPayload.replace("Mozilla", "").replace("{{collaborator}}", payloadDomain);
+                finalPayload = originalReferer + bxssPayload.replace("{{collaborator}}", payloadDomain);
             } else {
-                finalPayload = "1" + bxssPayload.replace("Mozilla", "").replace("{{collaborator}}", payloadDomain);
+                finalPayload = "1" + bxssPayload.replace("{{collaborator}}", payloadDomain);
             }
 
             // Create and store correlation
@@ -695,6 +798,9 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             String currentPayload = sqliPayload;
             headersToAdd.add("Referer: " + refererValue + currentPayload);
         }
+        
+        // Add extra headers (clean, without payloads)
+        headersToAdd.addAll(extraHeaders);
 
         List<HttpHeader> newHeaders = addOrReplaceHeaders(baseHeaders, headersToAdd);
         return request.withUpdatedHeaders(newHeaders);
@@ -743,7 +849,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             for (String sensitiveHeader : sensitiveHeaders) {
                 CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
                 String payloadDomain = collabPayload.toString();
-                String finalPayload = hostValue + bxssPayload.replace("Mozilla", "").replace("{{collaborator}}", payloadDomain);
+                String finalPayload = hostValue + bxssPayload.replace("{{collaborator}}", payloadDomain);
                 
                 // Store correlation for this payload
                 payloadMap.put(payloadDomain, new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method()));
@@ -799,13 +905,13 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     }
 
     private void createSqlInjectionIssue(InterceptedResponse interceptedResponse, long responseTime) {
-        api.logging().logToOutput("💉 POSSIBLE SQL INJECTION DETECTED! 💉");
+        api.logging().logToOutput("POSSIBLE SQL INJECTION DETECTED!");
         api.logging().logToOutput("═══════════════════════════════════════════════════════════");
-        api.logging().logToOutput("🎯 Attack Vector: SQL injection via regular headers");
+        api.logging().logToOutput("Attack Vector: SQL injection via regular headers");
         api.logging().logToOutput("  • URL: " + interceptedResponse.request().url());
         api.logging().logToOutput("  • Response Time: " + responseTime + " ms");
         api.logging().logToOutput("  • Expected Sleep Time: " + sqliSleepTime + " seconds");
-        api.logging().logToOutput("🕐 Detected: " + new java.util.Date());
+        api.logging().logToOutput("Detected: " + new java.util.Date());
         
         // Create proper audit issue
         try {
@@ -827,13 +933,13 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     }
 
     private void createSensitiveHeaderSqlIssue(HttpRequestResponse response, long responseTime) {
-        api.logging().logToOutput("💉 POSSIBLE SQL INJECTION VIA SENSITIVE HEADERS DETECTED! 💉");
+        api.logging().logToOutput("POSSIBLE SQL INJECTION VIA SENSITIVE HEADERS DETECTED!");
         api.logging().logToOutput("═══════════════════════════════════════════════════════════");
-        api.logging().logToOutput("🎯 Attack Vector: SQL injection via sensitive headers");
+        api.logging().logToOutput("Attack Vector: SQL injection via sensitive headers");
         api.logging().logToOutput("  • URL: " + response.request().url());
         api.logging().logToOutput("  • Response Time: " + responseTime + " ms");
         api.logging().logToOutput("  • Expected Sleep Time: " + sqliSleepTime + " seconds");
-        api.logging().logToOutput("🕐 Detected: " + new java.util.Date());
+        api.logging().logToOutput("Detected: " + new java.util.Date());
         
         // Create proper audit issue
         try {
@@ -907,7 +1013,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                         for (String sensitiveHeader : sensitiveHeaders) {
                             CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
                             String payloadDomain = collabPayload.toString();
-                            String finalPayload = hostValue + bxssPayload.replace("Mozilla", "").replace("{{collaborator}}", payloadDomain);
+                            String finalPayload = hostValue + bxssPayload.replace("{{collaborator}}", payloadDomain);
                             
                             // Store correlation for this payload
                             payloadMap.put(payloadDomain, new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method()));
