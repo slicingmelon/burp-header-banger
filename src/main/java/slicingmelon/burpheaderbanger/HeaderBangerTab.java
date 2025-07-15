@@ -14,7 +14,7 @@ public class HeaderBangerTab {
     private JTabbedPane tabbedPane;
     private JCheckBox activeCheckBox;
     private JCheckBox onlyInScopeCheckBox;
-    private JCheckBox addOnlyIfNotExistsCheckBox;
+
     private JButton sqliButton;
     private JButton xssButton;
     private DefaultListModel<String> headersListModel;
@@ -119,15 +119,32 @@ public class HeaderBangerTab {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         
-        // Top panel with checkbox
-        JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        addOnlyIfNotExistsCheckBox = new JCheckBox("Add extra headers only if they don't exist (unchecked = overwrite existing)", !extension.isOverwriteExtraHeaders());
-        addOnlyIfNotExistsCheckBox.addItemListener(e -> {
-            extension.setOverwriteExtraHeaders(e.getStateChange() != ItemEvent.SELECTED);
+        // Top panel with extra headers behavior settings
+        JPanel topPanel = new JPanel();
+        topPanel.setLayout(new BoxLayout(topPanel, BoxLayout.Y_AXIS));
+        topPanel.setBorder(BorderFactory.createTitledBorder("Extra Headers Behavior"));
+        
+        JLabel explanationLabel = new JLabel("Configure how extra headers should be handled:");
+        explanationLabel.setFont(explanationLabel.getFont().deriveFont(Font.PLAIN, 12f));
+        topPanel.add(explanationLabel);
+        
+        JLabel noteLabel = new JLabel("Note: These settings only apply to extra headers, not attack headers.");
+        noteLabel.setFont(noteLabel.getFont().deriveFont(Font.ITALIC, 11f));
+        noteLabel.setForeground(Color.GRAY);
+        topPanel.add(noteLabel);
+        
+        // Add if not exists checkbox (enabled by default)
+        JCheckBox addIfNotExistsCheckBox = new JCheckBox("Add extra headers if they don't already exist", true);
+        topPanel.add(addIfNotExistsCheckBox);
+        
+        // Overwrite existing checkbox (disabled by default)
+        JCheckBox overwriteExistingCheckBox = new JCheckBox("Overwrite existing headers if they already exist", extension.isOverwriteExtraHeaders());
+        overwriteExistingCheckBox.addItemListener(e -> {
+            extension.setOverwriteExtraHeaders(e.getStateChange() == ItemEvent.SELECTED);
             extension.saveSettings();
-            api.logging().logToOutput("Extra headers mode: " + (extension.isOverwriteExtraHeaders() ? "overwrite existing" : "add only if not exists"));
+            api.logging().logToOutput("Extra headers overwrite mode: " + (extension.isOverwriteExtraHeaders() ? "enabled" : "disabled"));
         });
-        topPanel.add(addOnlyIfNotExistsCheckBox);
+        topPanel.add(overwriteExistingCheckBox);
         
         // Main content panel using BoxLayout for better balance
         JPanel mainPanel = new JPanel();

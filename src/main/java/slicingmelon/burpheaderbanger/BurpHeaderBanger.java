@@ -130,8 +130,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     
     private static final List<String> DEFAULT_SENSITIVE_HEADERS = Arrays.asList(
             "X-Host", "X-Forwarded-Host", "X-Forwarded-Server",
-            "X-HTTP-Host-Override", "Forwarded", "Origin",
-            "X-Original-URL", "X-Rewrite-URL"
+            "X-HTTP-Host-Override", "Forwarded", "Origin"
     );
     
     private static final List<String> DEFAULT_SKIP_HOSTS = Arrays.asList(
@@ -265,8 +264,15 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         
         // Load extra headers
         String extraHeadersJson = persistedObject.getString("extraHeaders");
+        api.logging().logToOutput("DEBUG LOAD: Raw extra headers JSON: '" + extraHeadersJson + "'");
         if (extraHeadersJson != null && !extraHeadersJson.isEmpty()) {
             extraHeaders = new ArrayList<>(Arrays.asList(extraHeadersJson.split(",")));
+        }
+        
+        // Debug logging for extra headers
+        api.logging().logToOutput("Loaded " + extraHeaders.size() + " extra headers: " + extraHeaders);
+        for (int i = 0; i < extraHeaders.size(); i++) {
+            api.logging().logToOutput("  Extra header " + i + ": '" + extraHeaders.get(i) + "'");
         }
         
         // Load overwrite setting
@@ -287,6 +293,12 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         persistedObject.setString("skipHosts", String.join(",", skipHosts));
         persistedObject.setString("sqliPayload", sqliPayload);
         persistedObject.setString("bxssPayload", bxssPayload);
+        
+        // Debug logging for extra headers save
+        api.logging().logToOutput("DEBUG saveSettings: Saving " + extraHeaders.size() + " extra headers: " + extraHeaders);
+        api.logging().logToOutput("DEBUG saveSettings: Extra headers as string: '" + String.join(",", extraHeaders) + "'");
+        api.logging().logToOutput("DEBUG saveSettings: overwriteExtraHeaders setting: " + overwriteExtraHeaders);
+        
         persistedObject.setString("extraHeaders", String.join(",", extraHeaders));
         persistedObject.setBoolean("overwriteExtraHeaders", overwriteExtraHeaders);
     }
@@ -638,6 +650,10 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     private List<HttpHeader> addOrReplaceHeaders(List<HttpHeader> originalHeaders, List<String> headersToAdd) {
         List<HttpHeader> newHeaders = new ArrayList<>();
         
+        api.logging().logToOutput("DEBUG addOrReplaceHeaders: Original headers count: " + originalHeaders.size());
+        api.logging().logToOutput("DEBUG addOrReplaceHeaders: Headers to add: " + headersToAdd);
+        api.logging().logToOutput("DEBUG addOrReplaceHeaders: overwriteExtraHeaders setting: " + overwriteExtraHeaders);
+        
         // Add original headers, excluding ones we're going to replace
         for (HttpHeader header : originalHeaders) {
             boolean shouldReplace = false;
@@ -656,23 +672,41 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         // Add new headers
         for (String headerToAdd : headersToAdd) {
             String[] parts = headerToAdd.split(":", 2);
+            api.logging().logToOutput("DEBUG addOrReplaceHeaders: Processing header: " + headerToAdd + " (parts: " + parts.length + ")");
             if (parts.length == 2) {
                 String headerName = parts[0].trim();
                 String headerValue = parts[1].trim();
                 
-                // Check if we should add or skip (if overwriteExtraHeaders is false)
-                if (!overwriteExtraHeaders) {
-                    boolean exists = originalHeaders.stream()
-                            .anyMatch(h -> h.name().equalsIgnoreCase(headerName));
-                    if (exists) {
-                        continue; // Skip this header
-                    }
-                }
+                api.logging().logToOutput("DEBUG addOrReplaceHeaders: Header name: '" + headerName + "', value: '" + headerValue + "'");
                 
+                // Special handling for extra headers - they should be governed by the overwrite setting
+                boolean isExtraHeader = extraHeaders.stream()
+                        .anyMatch(eh -> eh.equalsIgnoreCase(headerToAdd));
+                
+                // For extra headers, check the overwrite setting
+                if (isExtraHeader) {
+                    if (!overwriteExtraHeaders) {
+                        // If overwrite is disabled, check if header already exists
+                        boolean exists = originalHeaders.stream()
+                                .anyMatch(h -> h.name().equalsIgnoreCase(headerName));
+                        api.logging().logToOutput("DEBUG addOrReplaceHeaders: Extra header exists check: " + exists + " for header: " + headerName);
+                        if (exists) {
+                            api.logging().logToOutput("DEBUG addOrReplaceHeaders: Skipping extra header " + headerName + " because it already exists and overwrite is disabled");
+                            continue; // Skip this header
+                        }
+                    }
+                    api.logging().logToOutput("DEBUG addOrReplaceHeaders: Processing extra header: " + headerName + " (overwrite=" + overwriteExtraHeaders + ")");
+                }
+                // Regular attack headers are always added (no overwrite check for them)
+                
+                api.logging().logToOutput("DEBUG addOrReplaceHeaders: Adding header: " + headerName + " = " + headerValue + (isExtraHeader ? " (EXTRA HEADER)" : ""));
                 newHeaders.add(HttpHeader.httpHeader(headerName, headerValue));
+            } else {
+                api.logging().logToOutput("DEBUG addOrReplaceHeaders: Skipping malformed header: " + headerToAdd);
             }
         }
         
+        api.logging().logToOutput("DEBUG addOrReplaceHeaders: Final headers count: " + newHeaders.size());
         return newHeaders;
     }
 
@@ -705,6 +739,21 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
 
         // Modify request headers
         HttpRequest modifiedRequest = modifyRequestHeaders(request);
+        
+        // DEBUG: Show comparison of original vs modified request
+        api.logging().logToOutput("DEBUG PROXY: Original request headers: " + request.headers().size());
+        api.logging().logToOutput("DEBUG PROXY: Modified request headers: " + modifiedRequest.headers().size());
+        
+        // Check if extra headers are present in the modified request
+        for (String extraHeader : extraHeaders) {
+            String[] parts = extraHeader.split(":", 2);
+            if (parts.length == 2) {
+                String headerName = parts[0].trim();
+                boolean found = modifiedRequest.headers().stream()
+                        .anyMatch(h -> h.name().equalsIgnoreCase(headerName));
+                api.logging().logToOutput("DEBUG PROXY: Extra header '" + headerName + "' found in modified request: " + found);
+            }
+        }
         
         // Store timestamp for response time analysis
         String requestKey = request.url();
@@ -771,6 +820,8 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         List<HttpHeader> modifiedHeaders = new ArrayList<>(request.headers());
         
         api.logging().logToOutput("Injecting XSS payloads for request: " + request.url());
+        api.logging().logToOutput("DEBUG XSS: Current extra headers list: " + extraHeaders);
+        api.logging().logToOutput("DEBUG XSS: Extra headers size: " + extraHeaders.size());
         
         for (String headerName : headers) {
             CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
@@ -810,12 +861,56 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         api.logging().logToOutput("Total payloads in map after injection: " + payloadMap.size());
         
         // Add extra headers as well, without payloads
-        return request.withUpdatedHeaders(addOrReplaceHeaders(modifiedHeaders, extraHeaders));
+        api.logging().logToOutput("Adding " + extraHeaders.size() + " extra headers to XSS request: " + extraHeaders);
+        
+        // DIRECTLY add extra headers to avoid complex logic
+        for (String extraHeader : extraHeaders) {
+            api.logging().logToOutput("DEBUG XSS: Processing extra header: '" + extraHeader + "'");
+            String[] parts = extraHeader.split(":", 2);
+            if (parts.length == 2) {
+                String headerName = parts[0].trim();
+                String headerValue = parts[1].trim();
+                
+                // Remove existing header if overwrite is enabled
+                if (overwriteExtraHeaders) {
+                    modifiedHeaders.removeIf(h -> h.name().equalsIgnoreCase(headerName));
+                    api.logging().logToOutput("DEBUG XSS: Removed existing header: " + headerName);
+                } else {
+                    // Check if header already exists (only if overwrite is disabled)
+                    boolean exists = modifiedHeaders.stream()
+                            .anyMatch(h -> h.name().equalsIgnoreCase(headerName));
+                    if (exists) {
+                        api.logging().logToOutput("DEBUG XSS: Skipping extra header " + headerName + " because it already exists and overwrite is disabled");
+                        continue;
+                    }
+                }
+                
+                // Add the extra header
+                modifiedHeaders.add(HttpHeader.httpHeader(headerName, headerValue));
+                api.logging().logToOutput("DEBUG XSS: Added extra header: " + headerName + " = " + headerValue);
+                api.logging().logToOutput("DEBUG XSS: Total headers after adding extra header: " + modifiedHeaders.size());
+            } else {
+                api.logging().logToOutput("DEBUG XSS: Skipping malformed extra header: " + extraHeader);
+            }
+        }
+        
+        HttpRequest finalRequest = request.withUpdatedHeaders(modifiedHeaders);
+        
+        // DEBUG: Show all headers in the final request
+        api.logging().logToOutput("DEBUG XSS: Final request headers (" + finalRequest.headers().size() + " total):");
+        for (HttpHeader header : finalRequest.headers()) {
+            api.logging().logToOutput("  " + header.name() + ": " + header.value());
+        }
+        
+        return finalRequest;
     }
     
     private HttpRequest injectSqlInjectionPayloads(HttpRequest request) {
         List<HttpHeader> originalHeaders = request.headers();
         List<String> headersToAdd = new ArrayList<>();
+        
+        api.logging().logToOutput("DEBUG SQLi: Current extra headers list: " + extraHeaders);
+        api.logging().logToOutput("DEBUG SQLi: Extra headers size: " + extraHeaders.size());
         
         // Get base headers (exclude injected ones only)
         List<HttpHeader> baseHeaders = new ArrayList<>();
@@ -838,9 +933,33 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         }
         
         // Add extra headers (clean, without payloads)
-        headersToAdd.addAll(extraHeaders);
-
+        api.logging().logToOutput("Adding " + extraHeaders.size() + " extra headers to SQLi request: " + extraHeaders);
+        // NOTE: Don't add extra headers to headersToAdd - we'll handle them separately
+        
         List<HttpHeader> newHeaders = addOrReplaceHeaders(baseHeaders, headersToAdd);
+        
+        // DIRECTLY add extra headers to the final headers list
+        for (String extraHeader : extraHeaders) {
+            api.logging().logToOutput("DEBUG SQLi: Processing extra header: '" + extraHeader + "'");
+            String[] parts = extraHeader.split(":", 2);
+            if (parts.length == 2) {
+                String headerName = parts[0].trim();
+                String headerValue = parts[1].trim();
+                
+                // Remove existing header if overwrite is enabled
+                if (overwriteExtraHeaders) {
+                    newHeaders.removeIf(h -> h.name().equalsIgnoreCase(headerName));
+                    api.logging().logToOutput("DEBUG SQLi: Removed existing header: " + headerName);
+                }
+                
+                // Add the extra header
+                newHeaders.add(HttpHeader.httpHeader(headerName, headerValue));
+                api.logging().logToOutput("DEBUG SQLi: Added extra header: " + headerName + " = " + headerValue);
+            } else {
+                api.logging().logToOutput("DEBUG SQLi: Skipping malformed extra header: " + extraHeader);
+            }
+        }
+        
         return request.withUpdatedHeaders(newHeaders);
     }
 
