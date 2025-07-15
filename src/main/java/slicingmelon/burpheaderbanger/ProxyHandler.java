@@ -25,12 +25,12 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
     private final String collaboratorServerLocation;
     private final Map<String, Long> requestTimestamps;
     private final Map<String, PayloadCorrelation> payloadMap;
-    private final AuditIssueCreator auditIssueCreator;
+    private final AuditIssueBuilder auditIssueCreator;
 
     public ProxyHandler(BurpHeaderBanger extension, MontoyaApi api, ScheduledExecutorService scheduler,
                        CollaboratorClient collaboratorClient, String collaboratorServerLocation,
                        Map<String, Long> requestTimestamps, Map<String, PayloadCorrelation> payloadMap,
-                       AuditIssueCreator auditIssueCreator) {
+                       AuditIssueBuilder auditIssueCreator) {
         this.extension = extension;
         this.api = api;
         this.scheduler = scheduler;

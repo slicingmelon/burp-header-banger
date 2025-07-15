@@ -120,7 +120,7 @@ public class BurpHeaderBanger implements BurpExtension {
         updateInjectedHeaders();
         
         // Create helper classes
-        AuditIssueCreator auditIssueCreator = new AuditIssueCreator(this, api);
+        AuditIssueBuilder auditIssueCreator = new AuditIssueBuilder(this, api);
         ProxyHandler proxyHandler = new ProxyHandler(this, api, scheduler, collaboratorClient, 
                 collaboratorServerLocation, requestTimestamps, payloadMap, auditIssueCreator);
         ScanCheck scanCheck = new ScanCheck(this, api, scheduler, collaboratorClient, 

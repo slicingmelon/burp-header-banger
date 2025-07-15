@@ -13,11 +13,11 @@ import burp.api.montoya.scanner.audit.issues.AuditIssueSeverity;
 import java.util.ArrayList;
 import java.util.List;
 
-public class AuditIssueCreator {
+public class AuditIssueBuilder {
     private final BurpHeaderBanger extension;
     private final MontoyaApi api;
 
-    public AuditIssueCreator(BurpHeaderBanger extension, MontoyaApi api) {
+    public AuditIssueBuilder(BurpHeaderBanger extension, MontoyaApi api) {
         this.extension = extension;
         this.api = api;
     }

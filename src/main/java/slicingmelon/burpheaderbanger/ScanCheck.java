@@ -34,11 +34,11 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
     private final ScheduledExecutorService scheduler;
     private final CollaboratorClient collaboratorClient;
     private final Map<String, PayloadCorrelation> payloadMap;
-    private final AuditIssueCreator auditIssueCreator;
+    private final AuditIssueBuilder auditIssueCreator;
 
     public ScanCheck(BurpHeaderBanger extension, MontoyaApi api, ScheduledExecutorService scheduler,
                     CollaboratorClient collaboratorClient, Map<String, PayloadCorrelation> payloadMap,
-                    AuditIssueCreator auditIssueCreator) {
+                    AuditIssueBuilder auditIssueCreator) {
         this.extension = extension;
         this.api = api;
         this.scheduler = scheduler;
