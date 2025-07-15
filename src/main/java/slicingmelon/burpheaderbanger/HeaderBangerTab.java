@@ -192,7 +192,7 @@ public class HeaderBangerTab {
         headersList = new JList<>(headersListModel);
         headersList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         JScrollPane scrollPane = new JScrollPane(headersList);
-        scrollPane.setPreferredSize(new Dimension(200, 80)); // Reduced from 120 to 80
+        scrollPane.setPreferredSize(new Dimension(200, 500)); // Increased from 80 to 100 for better balance
         panel.add(scrollPane, BorderLayout.CENTER);
         
         // Input panel
@@ -240,7 +240,7 @@ public class HeaderBangerTab {
         sensitiveHeadersList = new JList<>(sensitiveHeadersListModel);
         sensitiveHeadersList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         JScrollPane scrollPane = new JScrollPane(sensitiveHeadersList);
-        scrollPane.setPreferredSize(new Dimension(200, 80)); // Reduced from 120 to 80
+        scrollPane.setPreferredSize(new Dimension(200, 500)); // Increased from 80 to 100 for better balance
         panel.add(scrollPane, BorderLayout.CENTER);
         
         // Input panel
@@ -368,7 +368,7 @@ public class HeaderBangerTab {
         extraHeadersList = new JList<>(extraHeadersListModel);
         extraHeadersList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         JScrollPane scrollPane = new JScrollPane(extraHeadersList);
-        scrollPane.setPreferredSize(new Dimension(200, 80)); // Reduced from 120 to 80
+        scrollPane.setPreferredSize(new Dimension(200, 500)); // Increased from 80 to 100 for better balance
         panel.add(scrollPane, BorderLayout.CENTER);
         
         // Input panel
