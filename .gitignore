@@ -1,0 +1,11 @@
+*.py
+.gradle
+.vscode
+.idea
+bin/
+build/classes/
+build/generated/
+build/tmp/
+build/reports/
+build/resources/main/
+
