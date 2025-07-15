@@ -69,7 +69,7 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         // Modify request headers
         HttpRequest modifiedRequest = modifyRequestHeaders(request);
         
-        // Store timestamp for response time analysis
+        // Store timestamp for response time analysis (InterceptedResponse doesn't have timingData())
         String requestKey = request.url();
         requestTimestamps.put(requestKey, System.currentTimeMillis());
         
@@ -306,6 +306,12 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
     }
 
     private void processResponseForSqli(InterceptedResponse interceptedResponse) {
+        // Check if timing-based detection is disabled
+        if (!extension.isTimingBasedDetectionEnabled()) {
+            api.logging().logToOutput("Timing-based SQL injection detection is disabled");
+            return;
+        }
+        
         // Check content type
         String contentType = getHeaderValue(interceptedResponse.headers(), "Content-Type");
         if (contentType != null) {
@@ -318,14 +324,19 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             }
         }
 
-        // Check response time
+        // WARNING: Timing-based detection is unreliable when proxy intercept is enabled!
+        // If intercept is on, requests will be delayed by manual interaction, causing false positives
         String requestKey = interceptedResponse.request().url();
         Long startTime = requestTimestamps.get(requestKey);
         if (startTime != null) {
             long responseTime = System.currentTimeMillis() - startTime;
             requestTimestamps.remove(requestKey);
             
+            // Log timing information for debugging
+            api.logging().logToOutput("SQL injection timing check - Response time: " + responseTime + " ms, threshold: " + (extension.getSqliSleepTime() * 1000) + " ms");
+            
             if (responseTime >= extension.getSqliSleepTime() * 1000) {
+                api.logging().logToOutput("TIMING-BASED SQL INJECTION DETECTED (WARNING: May be false positive if proxy intercept is enabled!)");
                 auditIssueCreator.createSqlInjectionIssue(interceptedResponse, responseTime);
             }
         }
@@ -491,10 +502,13 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         try {
             long startTime = System.currentTimeMillis();
             var response = api.http().sendRequest(workingRequest);
-            long endTime = System.currentTimeMillis();
-            long responseTime = endTime - startTime;
-
-            if (responseTime >= extension.getSqliSleepTime() * 1000) {
+            long responseTime = System.currentTimeMillis() - startTime;
+            
+            api.logging().logToOutput("SQLi sensitive headers - Response time: " + responseTime + " ms (manual timing)");
+            
+            // Only check timing if timing-based detection is enabled
+            if (extension.isTimingBasedDetectionEnabled() && responseTime >= extension.getSqliSleepTime() * 1000) {
+                api.logging().logToOutput("TIMING-BASED SQL INJECTION DETECTED in sensitive headers (WARNING: May be false positive if proxy intercept is enabled!)");
                 auditIssueCreator.createSensitiveHeaderSqlIssue(response, responseTime);
             }
         } catch (Exception e) {

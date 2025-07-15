@@ -40,7 +40,7 @@ public class AuditIssueBuilder {
             );
             
             // Get markers for the SQL injection payload in request and response
-            List<Marker> requestMarkers = getRequestMarkers(interceptedResponse.initiatingRequest(), extension.getSqliPayload());
+            List<Marker> requestMarkers = getRequestMarkersForSqli(interceptedResponse.initiatingRequest(), extension.getSqliPayload());
             List<Marker> responseMarkers = getResponseMarkers(evidenceRequestResponse, extension.getSqliPayload());
             
             // Add markers to the evidence
@@ -93,7 +93,7 @@ public class AuditIssueBuilder {
         // Create proper audit issue using the original request with injected headers
         try {
             // Get markers for the SQL injection payload in request and response
-            List<Marker> requestMarkers = getRequestMarkers(response.request(), extension.getSqliPayload());
+            List<Marker> requestMarkers = getRequestMarkersForSqli(response.request(), extension.getSqliPayload());
             List<Marker> responseMarkers = getResponseMarkers(response, extension.getSqliPayload());
             
             // Add markers to the evidence
@@ -160,18 +160,14 @@ public class AuditIssueBuilder {
                     originalRequestResponse.originalResponse()
                 );
                 
-                // Get markers for the XSS payload in request and response
+                // Get markers for the XSS payload in request (response markers not needed for blind XSS)
                 String collaboratorDomain = interaction.id().toString();
-                List<Marker> requestMarkers = getRequestMarkers(originalRequestResponse.finalRequest(), collaboratorDomain);
-                List<Marker> responseMarkers = getResponseMarkers(evidenceRequestResponse, collaboratorDomain);
+                List<Marker> requestMarkers = getRequestMarkersForHeader(originalRequestResponse.finalRequest(), correlation.headerName, collaboratorDomain);
                 
                 // Add markers to the evidence
                 HttpRequestResponse markedEvidence = evidenceRequestResponse;
                 if (!requestMarkers.isEmpty()) {
                     markedEvidence = markedEvidence.withRequestMarkers(requestMarkers);
-                }
-                if (!responseMarkers.isEmpty()) {
-                    markedEvidence = markedEvidence.withResponseMarkers(responseMarkers);
                 }
                 
                 AuditIssue issue = AuditIssue.auditIssue(
@@ -207,18 +203,14 @@ public class AuditIssueBuilder {
                 HttpRequest issueRequest = HttpRequest.httpRequestFromUrl(correlation.requestUrl);
                 HttpRequestResponse issueRequestResponse = api.http().sendRequest(issueRequest);
                 
-                // Get markers for the XSS payload in request and response
+                // Get markers for the XSS payload in request (response markers not needed for blind XSS)
                 String collaboratorDomain = interaction.id().toString();
-                List<Marker> requestMarkers = getRequestMarkers(issueRequest, collaboratorDomain);
-                List<Marker> responseMarkers = getResponseMarkers(issueRequestResponse, collaboratorDomain);
+                List<Marker> requestMarkers = getRequestMarkersForHeader(issueRequest, correlation.headerName, collaboratorDomain);
                 
                 // Add markers to the evidence
                 HttpRequestResponse markedEvidence = issueRequestResponse;
                 if (!requestMarkers.isEmpty()) {
                     markedEvidence = markedEvidence.withRequestMarkers(requestMarkers);
-                }
-                if (!responseMarkers.isEmpty()) {
-                    markedEvidence = markedEvidence.withResponseMarkers(responseMarkers);
                 }
                 
                 AuditIssue issue = AuditIssue.auditIssue(
@@ -290,6 +282,61 @@ public class AuditIssueBuilder {
                 }
                 start = end;
             }
+        }
+        
+        return markers;
+    }
+
+    private List<Marker> getRequestMarkersForHeader(HttpRequest request, String headerName, String payload) {
+        List<Marker> markers = new ArrayList<>();
+        
+        String requestString = request.toString();
+        String[] lines = requestString.split("\r\n");
+        
+        // Find the header line that contains the specified header name and payload
+        int currentPosition = 0;
+        for (String line : lines) {
+            if (line.toLowerCase().startsWith(headerName.toLowerCase() + ":") && line.contains(payload)) {
+                // Mark the entire header line
+                int lineStart = currentPosition;
+                int lineEnd = currentPosition + line.length();
+                markers.add(Marker.marker(lineStart, lineEnd));
+                api.logging().logToOutput("Marked header line: " + line);
+                break;
+            }
+            currentPosition += line.length() + 2; // +2 for \r\n
+        }
+        
+        // If no header line found, fall back to the old method
+        if (markers.isEmpty()) {
+            return getRequestMarkers(request, payload);
+        }
+        
+        return markers;
+    }
+
+    private List<Marker> getRequestMarkersForSqli(HttpRequest request, String payload) {
+        List<Marker> markers = new ArrayList<>();
+        
+        String requestString = request.toString();
+        String[] lines = requestString.split("\r\n");
+        
+        // Find all header lines that contain the SQL payload
+        int currentPosition = 0;
+        for (String line : lines) {
+            if (line.contains(":") && line.contains(payload) && !line.startsWith("Host:")) {
+                // Mark the entire header line that contains the payload
+                int lineStart = currentPosition;
+                int lineEnd = currentPosition + line.length();
+                markers.add(Marker.marker(lineStart, lineEnd));
+                api.logging().logToOutput("Marked SQL injection header line: " + line);
+            }
+            currentPosition += line.length() + 2; // +2 for \r\n
+        }
+        
+        // If no header lines found, fall back to the old method
+        if (markers.isEmpty()) {
+            return getRequestMarkers(request, payload);
         }
         
         return markers;

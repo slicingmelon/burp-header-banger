@@ -51,6 +51,7 @@ public class BurpHeaderBanger implements BurpExtension {
     private boolean onlyInScopeItems = false;
     private int attackMode = 2; // 1 = Blind SQLi, 2 = Blind XSS
     private int sqliSleepTime = DEFAULT_SQLI_SLEEP_TIME;
+    private boolean timingBasedDetectionEnabled = true; // WARNING: May cause false positives when proxy intercept is enabled!
     
     // Headers and payloads
     private List<String> headers = new ArrayList<>();
@@ -194,6 +195,11 @@ public class BurpHeaderBanger implements BurpExtension {
             attackMode = persistedObject.getInteger("attackMode");
         }
         
+        // Load timing-based detection setting
+        if (persistedObject.getBoolean("timingBasedDetectionEnabled") != null) {
+            timingBasedDetectionEnabled = persistedObject.getBoolean("timingBasedDetectionEnabled");
+        }
+        
         // Load headers
         String headersJson = persistedObject.getString("headers");
         if (headersJson != null && !headersJson.isEmpty()) {
@@ -255,6 +261,7 @@ public class BurpHeaderBanger implements BurpExtension {
         persistedObject.setBoolean("extensionActive", extensionActive);
         persistedObject.setBoolean("onlyInScopeItems", onlyInScopeItems);
         persistedObject.setInteger("attackMode", attackMode);
+        persistedObject.setBoolean("timingBasedDetectionEnabled", timingBasedDetectionEnabled);
         persistedObject.setString("headers", String.join(",", headers));
         persistedObject.setString("sensitiveHeaders", String.join(",", sensitiveHeaders));
         persistedObject.setString("skipHosts", String.join(",", skipHosts));
@@ -279,6 +286,9 @@ public class BurpHeaderBanger implements BurpExtension {
     
     public boolean isOverwriteExtraHeaders() { return overwriteExtraHeaders; }
     public void setOverwriteExtraHeaders(boolean overwrite) { this.overwriteExtraHeaders = overwrite; }
+    
+    public boolean isTimingBasedDetectionEnabled() { return timingBasedDetectionEnabled; }
+    public void setTimingBasedDetectionEnabled(boolean enabled) { this.timingBasedDetectionEnabled = enabled; }
     
     public int getAttackMode() { return attackMode; }
     public void setAttackMode(int mode) { this.attackMode = mode; }
@@ -491,19 +501,15 @@ public class BurpHeaderBanger implements BurpExtension {
                         originalRequestResponse.originalResponse()
                     );
                     
-                    // Get markers for the XSS payload in request and response
+                    // Get markers for the XSS payload in request (response markers not needed for blind XSS)
                     // Use the collaborator domain to find the payload
                     String collaboratorDomain = interaction.id().toString();
-                    List<Marker> requestMarkers = getRequestMarkers(originalRequestResponse.finalRequest(), collaboratorDomain);
-                    List<Marker> responseMarkers = getResponseMarkers(evidenceRequestResponse, collaboratorDomain);
+                    List<Marker> requestMarkers = getRequestMarkersForHeader(originalRequestResponse.finalRequest(), correlation.headerName, collaboratorDomain);
                     
                     // Add markers to the evidence
                     HttpRequestResponse markedEvidence = evidenceRequestResponse;
                     if (!requestMarkers.isEmpty()) {
                         markedEvidence = markedEvidence.withRequestMarkers(requestMarkers);
-                    }
-                    if (!responseMarkers.isEmpty()) {
-                        markedEvidence = markedEvidence.withResponseMarkers(responseMarkers);
                     }
                     
                     AuditIssue issue = AuditIssue.auditIssue(
@@ -539,18 +545,14 @@ public class BurpHeaderBanger implements BurpExtension {
                 HttpRequest issueRequest = HttpRequest.httpRequestFromUrl(correlation.requestUrl);
                 HttpRequestResponse issueRequestResponse = api.http().sendRequest(issueRequest);
                 
-                // Get markers for the XSS payload in request and response
+                // Get markers for the XSS payload in request (response markers not needed for blind XSS)
                 String collaboratorDomain = interaction.id().toString();
-                List<Marker> requestMarkers = getRequestMarkers(issueRequest, collaboratorDomain);
-                List<Marker> responseMarkers = getResponseMarkers(issueRequestResponse, collaboratorDomain);
+                List<Marker> requestMarkers = getRequestMarkersForHeader(issueRequest, correlation.headerName, collaboratorDomain);
                 
                 // Add markers to the evidence
                 HttpRequestResponse markedEvidence = issueRequestResponse;
                 if (!requestMarkers.isEmpty()) {
                     markedEvidence = markedEvidence.withRequestMarkers(requestMarkers);
-                }
-                if (!responseMarkers.isEmpty()) {
-                    markedEvidence = markedEvidence.withResponseMarkers(responseMarkers);
                 }
                 
                 AuditIssue issue = AuditIssue.auditIssue(
@@ -663,6 +665,61 @@ public class BurpHeaderBanger implements BurpExtension {
                 }
                 start = end;
             }
+        }
+        
+        return markers;
+    }
+
+    private List<Marker> getRequestMarkersForHeader(HttpRequest request, String headerName, String payload) {
+        List<Marker> markers = new ArrayList<>();
+        
+        String requestString = request.toString();
+        String[] lines = requestString.split("\r\n");
+        
+        // Find the header line that contains the specified header name and payload
+        int currentPosition = 0;
+        for (String line : lines) {
+            if (line.toLowerCase().startsWith(headerName.toLowerCase() + ":") && line.contains(payload)) {
+                // Mark the entire header line
+                int lineStart = currentPosition;
+                int lineEnd = currentPosition + line.length();
+                markers.add(Marker.marker(lineStart, lineEnd));
+                api.logging().logToOutput("Marked header line: " + line);
+                break;
+            }
+            currentPosition += line.length() + 2; // +2 for \r\n
+        }
+        
+        // If no header line found, fall back to the old method
+        if (markers.isEmpty()) {
+            return getRequestMarkers(request, payload);
+        }
+        
+        return markers;
+    }
+
+    private List<Marker> getRequestMarkersForSqli(HttpRequest request, String payload) {
+        List<Marker> markers = new ArrayList<>();
+        
+        String requestString = request.toString();
+        String[] lines = requestString.split("\r\n");
+        
+        // Find all header lines that contain the SQL payload
+        int currentPosition = 0;
+        for (String line : lines) {
+            if (line.contains(":") && line.contains(payload) && !line.startsWith("Host:")) {
+                // Mark the entire header line that contains the payload
+                int lineStart = currentPosition;
+                int lineEnd = currentPosition + line.length();
+                markers.add(Marker.marker(lineStart, lineEnd));
+                api.logging().logToOutput("Marked SQL injection header line: " + line);
+            }
+            currentPosition += line.length() + 2; // +2 for \r\n
+        }
+        
+        // If no header lines found, fall back to the old method
+        if (markers.isEmpty()) {
+            return getRequestMarkers(request, payload);
         }
         
         return markers;
@@ -792,7 +849,7 @@ public class BurpHeaderBanger implements BurpExtension {
             );
             
             // Get markers for the SQL injection payload in request and response
-            List<Marker> requestMarkers = getRequestMarkers(interceptedResponse.initiatingRequest(), sqliPayload);
+            List<Marker> requestMarkers = getRequestMarkersForSqli(interceptedResponse.initiatingRequest(), sqliPayload);
             List<Marker> responseMarkers = getResponseMarkers(evidenceRequestResponse, sqliPayload);
             
             // Add markers to the evidence
@@ -845,7 +902,7 @@ public class BurpHeaderBanger implements BurpExtension {
         // Create proper audit issue using the original request with injected headers
         try {
             // Get markers for the SQL injection payload in request and response
-            List<Marker> requestMarkers = getRequestMarkers(response.request(), sqliPayload);
+            List<Marker> requestMarkers = getRequestMarkersForSqli(response.request(), sqliPayload);
             List<Marker> responseMarkers = getResponseMarkers(response, sqliPayload);
             
             // Add markers to the evidence
