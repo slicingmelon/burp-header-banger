@@ -2,7 +2,6 @@ from flask import Flask, request, redirect, url_for, render_template_string
 
 app = Flask(__name__)
 
-# Root route with links to login and register
 @app.route('/')
 def index():
     return '''
@@ -13,7 +12,6 @@ def index():
         </ul>
     '''
 
-# Basic login/register form template
 form_template = '''
     <h2>{{ action.title() }}</h2>
     <form method="post">

@@ -52,6 +52,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, ProxyResponseHandler, 
         ActiveScanCheck, PassiveScanCheck, ContextMenuItemsProvider {
@@ -373,7 +374,24 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                 api.logging().logToOutput("Current payload map size: " + payloadMap.size());
                 
                 if (payloadMap.size() > 0) {
-                    api.logging().logToOutput("Payload map contents: " + payloadMap.keySet());
+                    api.logging().logToOutput("Sample payload map entries: " + payloadMap.keySet().stream().limit(5).collect(Collectors.toList()));
+                }
+                
+                // Debug: Log details of all interactions
+                if (interactions.size() > 0) {
+                    api.logging().logToOutput("═══════════════════════════════════════════════════════════");
+                    api.logging().logToOutput("INTERACTION DETAILS:");
+                    for (int i = 0; i < interactions.size(); i++) {
+                        Interaction interaction = interactions.get(i);
+                        api.logging().logToOutput("Interaction " + (i + 1) + ":");
+                        api.logging().logToOutput("  Type: " + interaction.type().name());
+                        api.logging().logToOutput("  ID: " + interaction.id().toString());
+                        api.logging().logToOutput("  Has HTTP details: " + interaction.httpDetails().isPresent());
+                        api.logging().logToOutput("  Has DNS details: " + interaction.dnsDetails().isPresent());
+                        api.logging().logToOutput("  Has SMTP details: " + interaction.smtpDetails().isPresent());
+                        api.logging().logToOutput("  ─────────────────────────────────────────────────────────");
+                    }
+                    api.logging().logToOutput("═══════════════════════════════════════════════════════════");
                 }
                 
                 for (Interaction interaction : interactions) {
@@ -436,51 +454,42 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     private String findDomainInInteraction(Interaction interaction) {
         String interactionId = interaction.id().toString();
         
-        // First, try to directly match the interaction ID with our payload map keys
+        // Debug: Log the interaction details
+        api.logging().logToOutput("Found interaction - Type: " + interaction.type().name() + ", ID: " + interactionId);
+        
+        // The interaction ID should directly match our stored payload domain
         if (payloadMap.containsKey(interactionId)) {
+            api.logging().logToOutput("Direct match found for interaction ID: " + interactionId);
             return interactionId;
         }
         
-        // If that doesn't work, check if the interaction ID is a subdomain of any of our stored payloads
+        // Debug: Show what we have in the payload map vs what we're looking for
+        api.logging().logToOutput("No direct match found for interaction ID: " + interactionId);
+        api.logging().logToOutput("Looking for matches in payload map...");
+        
+        // Check if it's a partial match (maybe with/without protocol or trailing dots)
         for (String payloadDomain : payloadMap.keySet()) {
+            api.logging().logToOutput("Comparing '" + interactionId + "' with '" + payloadDomain + "'");
+            
             if (interactionId.equals(payloadDomain)) {
+                api.logging().logToOutput("Exact match found: " + payloadDomain);
+                return payloadDomain;
+            }
+            
+            // Check if interaction ID contains the payload domain
+            if (interactionId.contains(payloadDomain)) {
+                api.logging().logToOutput("Partial match found: " + payloadDomain + " in " + interactionId);
+                return payloadDomain;
+            }
+            
+            // Check if payload domain contains the interaction ID
+            if (payloadDomain.contains(interactionId)) {
+                api.logging().logToOutput("Reverse partial match found: " + interactionId + " in " + payloadDomain);
                 return payloadDomain;
             }
         }
         
-        // For HTTP interactions, check if the interaction ID contains our collaborator domain
-        if (interaction.httpDetails().isPresent()) {
-            String collaboratorHost = this.collaboratorServerLocation;
-            if (interactionId.endsWith("." + collaboratorHost)) {
-                // Check if this matches any of our stored payloads
-                for (String payloadDomain : payloadMap.keySet()) {
-                    if (payloadDomain.equals(interactionId)) {
-                        return payloadDomain;
-                    }
-                }
-            }
-        }
-        
-        // For DNS interactions, check the query
-        if (interaction.dnsDetails().isPresent()) {
-            String dnsQuery = interaction.dnsDetails().get().query().toString();
-            // Remove trailing dot if present
-            if (dnsQuery.endsWith(".")) {
-                dnsQuery = dnsQuery.substring(0, dnsQuery.length() - 1);
-            }
-            
-            // Check if this matches any of our stored payloads
-            for (String payloadDomain : payloadMap.keySet()) {
-                if (payloadDomain.equals(dnsQuery)) {
-                    return payloadDomain;
-                }
-            }
-        }
-        
-        // Debug logging
         api.logging().logToOutput("No matching payload found for interaction ID: " + interactionId);
-        api.logging().logToOutput("Available payload domains: " + payloadMap.keySet());
-        
         return null;
     }
 
@@ -724,6 +733,12 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     @Override
     public ProxyResponseReceivedAction handleResponseReceived(InterceptedResponse interceptedResponse) {
         if (!extensionActive) { // No longer checking attackMode == 2 here
+            return ProxyResponseReceivedAction.continueWith(interceptedResponse);
+        }
+
+        // IMPORTANT: Skip responses from collaborator server to prevent incorrect correlation
+        if (collaboratorServerLocation != null && interceptedResponse.request().url().contains(collaboratorServerLocation)) {
+            api.logging().logToOutput("Skipping collaborator response from: " + interceptedResponse.request().url());
             return ProxyResponseReceivedAction.continueWith(interceptedResponse);
         }
 
