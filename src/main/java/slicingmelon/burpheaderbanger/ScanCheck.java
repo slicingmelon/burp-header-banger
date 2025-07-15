@@ -100,15 +100,26 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                         List<HttpHeader> modifiedHeaders = new ArrayList<>(originalRequest.headers());
                         
                         for (String sensitiveHeader : extension.getSensitiveHeaders()) {
-                            CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
-                            String payloadDomain = collabPayload.toString();
-                            String finalPayload = hostValue + extension.getBxssPayload().replace("{{collaborator}}", payloadDomain);
+                            String finalPayload;
                             
-                            // Store correlation for this payload
-                            PayloadCorrelation correlation = new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method());
-                            payloadMap.put(payloadDomain, correlation);
-                            
-                            api.logging().logToOutput("Context menu: Added payload to map: " + payloadDomain + " -> " + sensitiveHeader);
+                            // Check if payload uses collaborator tracking
+                            if (extension.getBxssPayload().contains("{{collaborator}}")) {
+                                // Generate collaborator payload and do tracking
+                                CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
+                                String payloadDomain = collabPayload.toString();
+                                finalPayload = hostValue + extension.getBxssPayload().replace("{{collaborator}}", payloadDomain);
+                                
+                                // Store correlation for collaborator tracking
+                                PayloadCorrelation correlation = new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method());
+                                payloadMap.put(payloadDomain, correlation);
+                                
+                                api.logging().logToOutput("Context menu: Added payload to map: " + payloadDomain + " -> " + sensitiveHeader);
+                            } else {
+                                // Custom payload without collaborator - no tracking needed
+                                finalPayload = hostValue + extension.getBxssPayload();
+                                
+                                api.logging().logToOutput("Context menu: Using custom payload (no collaborator tracking): " + sensitiveHeader);
+                            }
                             
                             // Add or replace the sensitive header
                             boolean headerFoundAndReplaced = false;
@@ -141,7 +152,9 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                     List<String> headersToAdd = new ArrayList<>();
                     
                     for (String sensitiveHeader : extension.getSensitiveHeaders()) {
-                        headersToAdd.add(sensitiveHeader + ": " + hostValue + extension.getSqliPayload());
+                        // SQL injection payloads might use collaborator for out-of-band attacks (LOAD_FILE, xp_cmdshell, etc.)
+                        String currentPayload = extension.getSqliPayload();
+                        headersToAdd.add(sensitiveHeader + ": " + hostValue + currentPayload);
                     }
                     
                     headersToAdd.addAll(extension.getExtraHeaders());
