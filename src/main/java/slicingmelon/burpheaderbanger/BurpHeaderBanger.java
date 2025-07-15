@@ -626,8 +626,5 @@ public class BurpHeaderBanger implements BurpExtension {
         
         return markers;
     }
-
-    
-
 }
 
