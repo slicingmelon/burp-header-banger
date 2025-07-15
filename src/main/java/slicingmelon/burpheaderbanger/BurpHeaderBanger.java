@@ -28,34 +28,16 @@ import burp.api.montoya.scanner.scancheck.PassiveScanCheck;
 import burp.api.montoya.scanner.scancheck.ScanCheckType;
 import burp.api.montoya.scanner.audit.insertionpoint.AuditInsertionPoint;
 import burp.api.montoya.scanner.audit.issues.AuditIssue;
-import burp.api.montoya.scanner.audit.issues.AuditIssueConfidence;
-import burp.api.montoya.scanner.audit.issues.AuditIssueSeverity;
 import burp.api.montoya.http.Http;
 
 import static burp.api.montoya.scanner.AuditResult.auditResult;
 import static burp.api.montoya.scanner.ConsolidationAction.KEEP_EXISTING;
-import static burp.api.montoya.scanner.audit.issues.AuditIssue.auditIssue;
 import static java.util.Collections.emptyList;
-import static java.util.Collections.singletonList;
 import burp.api.montoya.ui.contextmenu.ContextMenuEvent;
 import burp.api.montoya.ui.contextmenu.ContextMenuItemsProvider;
-import burp.api.montoya.ui.editor.extension.EditorCreationContext;
-import burp.api.montoya.ui.editor.extension.ExtensionProvidedHttpRequestEditor;
-import burp.api.montoya.ui.editor.extension.ExtensionProvidedHttpResponseEditor;
-import burp.api.montoya.ui.editor.extension.HttpRequestEditorProvider;
-import burp.api.montoya.ui.editor.extension.HttpResponseEditorProvider;
-import burp.api.montoya.ui.Selection;
-import burp.api.montoya.ui.UserInterface;
-import burp.api.montoya.utilities.URLUtils;
 
 import javax.swing.*;
-import javax.swing.event.ListSelectionEvent;
-import javax.swing.event.ListSelectionListener;
 import java.awt.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
-import java.awt.event.ItemEvent;
-import java.awt.event.ItemListener;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -465,10 +447,10 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         List<HttpHeader> originalHeaders = request.headers();
         List<String> headersToAdd = new ArrayList<>();
         
-        // Get base headers (exclude injected ones and connection close)
+        // Get base headers (exclude injected ones only)
         List<HttpHeader> baseHeaders = new ArrayList<>();
         for (HttpHeader header : originalHeaders) {
-            if (!headers.contains(header.name()) && !header.name().equalsIgnoreCase("connection")) {
+            if (!headers.contains(header.name())) {
                 baseHeaders.add(header);
             }
         }
@@ -484,9 +466,6 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             String currentPayload = (attackMode == 1) ? sqliPayload : bxssPayload;
             headersToAdd.add("Referer: " + refererValue + currentPayload);
         }
-
-        // Add Connection: close
-        headersToAdd.add("Connection: close");
 
         List<HttpHeader> newHeaders = addOrReplaceHeaders(baseHeaders, headersToAdd);
         return request.withUpdatedHeaders(newHeaders);
@@ -540,9 +519,6 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
 
         // Add extra headers
         headersToAdd.addAll(extraHeaders);
-
-        // Add Connection: close
-        headersToAdd.add("Connection: close");
 
         List<HttpHeader> newHeaders = addOrReplaceHeaders(originalRequest.headers(), headersToAdd);
         HttpRequest modifiedRequest = originalRequest.withUpdatedHeaders(newHeaders);
@@ -625,7 +601,6 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                     }
                     
                     headersToAdd.addAll(extraHeaders);
-                    headersToAdd.add("Connection: close");
                     
                     List<HttpHeader> newHeaders = addOrReplaceHeaders(originalRequest.headers(), headersToAdd);
                     HttpRequest modifiedRequest = originalRequest.withUpdatedHeaders(newHeaders);

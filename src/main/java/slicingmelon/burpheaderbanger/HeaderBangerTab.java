@@ -6,7 +6,6 @@ import burp.api.montoya.collaborator.CollaboratorPayload;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ItemEvent;
-import java.util.List;
 
 public class HeaderBangerTab {
     private final BurpHeaderBanger extension;
