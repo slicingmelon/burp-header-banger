@@ -186,7 +186,7 @@ public class HeaderBangerTab {
         headersList = new JList<>(headersListModel);
         headersList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         JScrollPane scrollPane = new JScrollPane(headersList);
-        scrollPane.setPreferredSize(new Dimension(200, 150));
+        scrollPane.setPreferredSize(new Dimension(200, 120)); // Reduced from 150 to 120
         panel.add(scrollPane, BorderLayout.CENTER);
         
         // Input panel
@@ -234,7 +234,7 @@ public class HeaderBangerTab {
         sensitiveHeadersList = new JList<>(sensitiveHeadersListModel);
         sensitiveHeadersList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         JScrollPane scrollPane = new JScrollPane(sensitiveHeadersList);
-        scrollPane.setPreferredSize(new Dimension(200, 150));
+        scrollPane.setPreferredSize(new Dimension(200, 120)); // Reduced from 150 to 120
         panel.add(scrollPane, BorderLayout.CENTER);
         
         // Input panel
@@ -283,8 +283,8 @@ public class HeaderBangerTab {
         infoLabel.setFont(infoLabel.getFont().deriveFont(Font.PLAIN, 12f));
         infoPanel.add(infoLabel);
         
-        // Payload text area
-        sqliPayloadField = new JTextArea(extension.getSqliPayload(), 4, 30);
+        // Payload text area - single line
+        sqliPayloadField = new JTextArea(extension.getSqliPayload(), 1, 40); // Changed from 4 rows to 1 row, increased columns
         sqliPayloadField.setLineWrap(true);
         sqliPayloadField.setWrapStyleWord(true);
         sqliPayloadField.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
@@ -292,6 +292,7 @@ public class HeaderBangerTab {
         JScrollPane scrollPane = new JScrollPane(sqliPayloadField);
         scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
         scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+        scrollPane.setPreferredSize(new Dimension(400, 50)); // Set a specific height for single-line
         
         // Button panel
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 5));
@@ -322,8 +323,8 @@ public class HeaderBangerTab {
         infoLabel.setFont(infoLabel.getFont().deriveFont(Font.PLAIN, 12f));
         infoPanel.add(infoLabel);
         
-        // Payload text area
-        bxssPayloadField = new JTextArea(extension.getBxssPayload(), 4, 30);
+        // Payload text area - single line
+        bxssPayloadField = new JTextArea(extension.getBxssPayload(), 1, 40); // Changed from 4 rows to 1 row, increased columns
         bxssPayloadField.setLineWrap(true);
         bxssPayloadField.setWrapStyleWord(true);
         bxssPayloadField.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
@@ -331,6 +332,7 @@ public class HeaderBangerTab {
         JScrollPane scrollPane = new JScrollPane(bxssPayloadField);
         scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
         scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+        scrollPane.setPreferredSize(new Dimension(400, 50)); // Set a specific height for single-line
         
         // Button panel
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 5));
@@ -360,7 +362,7 @@ public class HeaderBangerTab {
         extraHeadersList = new JList<>(extraHeadersListModel);
         extraHeadersList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         JScrollPane scrollPane = new JScrollPane(extraHeadersList);
-        scrollPane.setPreferredSize(new Dimension(200, 150));
+        scrollPane.setPreferredSize(new Dimension(200, 120)); // Reduced from 150 to 120
         panel.add(scrollPane, BorderLayout.CENTER);
         
         // Input panel
