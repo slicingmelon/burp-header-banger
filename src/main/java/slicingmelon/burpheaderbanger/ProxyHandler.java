@@ -525,51 +525,5 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         return null;
     }
 
-    private List<HttpHeader> addOrReplaceHeaders(List<HttpHeader> originalHeaders, List<String> headersToAdd) {
-        List<HttpHeader> newHeaders = new ArrayList<>();
-        
-        // Add original headers, excluding ones we're going to replace
-        for (HttpHeader header : originalHeaders) {
-            boolean shouldReplace = false;
-            for (String headerToAdd : headersToAdd) {
-                String[] parts = headerToAdd.split(":", 2);
-                if (parts.length == 2 && parts[0].trim().equalsIgnoreCase(header.name())) {
-                    shouldReplace = true;
-                    break;
-                }
-            }
-            if (!shouldReplace) {
-                newHeaders.add(header);
-            }
-        }
-        
-        // Add new headers
-        for (String headerToAdd : headersToAdd) {
-            String[] parts = headerToAdd.split(":", 2);
-            if (parts.length == 2) {
-                String headerName = parts[0].trim();
-                String headerValue = parts[1].trim();
-                
-                // Special handling for extra headers - they should be governed by the overwrite setting
-                boolean isExtraHeader = extension.getExtraHeaders().stream()
-                        .anyMatch(eh -> eh.equalsIgnoreCase(headerToAdd));
-                
-                // For extra headers, check the overwrite setting
-                if (isExtraHeader) {
-                    if (!extension.isOverwriteExtraHeaders()) {
-                        // If overwrite is disabled, check if header already exists
-                        boolean exists = originalHeaders.stream()
-                                .anyMatch(h -> h.name().equalsIgnoreCase(headerName));
-                        if (exists) {
-                            continue; // Skip this header
-                        }
-                    }
-                }
-                
-                newHeaders.add(HttpHeader.httpHeader(headerName, headerValue));
-            }
-        }
-        
-        return newHeaders;
-    }
+
 } 
