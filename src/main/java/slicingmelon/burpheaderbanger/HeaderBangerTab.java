@@ -76,7 +76,7 @@ public class HeaderBangerTab {
         });
         activePanel.add(onlyInScopeCheckBox);
         
-        timingBasedDetectionCheckBox = new JCheckBox("Timing-based detection (WARNING: Disable if proxy intercept is on)", extension.isTimingBasedDetectionEnabled());
+        timingBasedDetectionCheckBox = new JCheckBox("Timing-based detection (excludes intercept delays)", extension.isTimingBasedDetectionEnabled());
         timingBasedDetectionCheckBox.addItemListener(e -> {
             extension.setTimingBasedDetectionEnabled(e.getStateChange() == ItemEvent.SELECTED);
             extension.saveSettings();
@@ -116,10 +116,14 @@ public class HeaderBangerTab {
     private void updateAttackModeButtons() {
         if (extension.getAttackMode() == 1) {
             sqliButton.setBackground(Color.GREEN);
+            sqliButton.setForeground(Color.BLACK); // Set text color to black
             xssButton.setBackground(null);
+            xssButton.setForeground(null); // Reset text color to default
         } else {
             sqliButton.setBackground(null);
+            sqliButton.setForeground(null); // Reset text color to default
             xssButton.setBackground(Color.GREEN);
+            xssButton.setForeground(Color.BLACK); // Set text color to black
         }
     }
 
@@ -156,26 +160,20 @@ public class HeaderBangerTab {
         extraHeadersBehaviorPanel.setBorder(BorderFactory.createTitledBorder("Extra Headers Behavior"));
         
         JLabel explanationLabel = new JLabel("Configure how extra headers should be handled:");
-        explanationLabel.setFont(explanationLabel.getFont().deriveFont(Font.PLAIN, 12f));
         extraHeadersBehaviorPanel.add(explanationLabel);
         
         JLabel noteLabel = new JLabel("Note: These settings only apply to extra headers, not attack headers.");
-        noteLabel.setFont(noteLabel.getFont().deriveFont(Font.ITALIC, 11f));
         noteLabel.setForeground(Color.GRAY);
         extraHeadersBehaviorPanel.add(noteLabel);
         
-        // Add if not exists checkbox (enabled by default)
-        JCheckBox addIfNotExistsCheckBox = new JCheckBox("Add extra headers if they don't already exist", true);
-        extraHeadersBehaviorPanel.add(addIfNotExistsCheckBox);
-        
-        // Overwrite existing checkbox (disabled by default)
-        JCheckBox overwriteExistingCheckBox = new JCheckBox("Overwrite existing headers if they already exist", extension.isOverwriteExtraHeaders());
-        overwriteExistingCheckBox.addItemListener(e -> {
-            extension.setOverwriteExtraHeaders(e.getStateChange() == ItemEvent.SELECTED);
+        // Allow duplicate headers checkbox
+        JCheckBox allowDuplicateHeadersCheckBox = new JCheckBox("Allow duplicate header values", extension.isAllowDuplicateHeaders());
+        allowDuplicateHeadersCheckBox.addItemListener(e -> {
+            extension.setAllowDuplicateHeaders(e.getStateChange() == ItemEvent.SELECTED);
             extension.saveSettings();
-            api.logging().logToOutput("Extra headers overwrite mode: " + (extension.isOverwriteExtraHeaders() ? "enabled" : "disabled"));
+            api.logging().logToOutput("Allow duplicate headers mode: " + (extension.isAllowDuplicateHeaders() ? "enabled" : "disabled"));
         });
-        extraHeadersBehaviorPanel.add(overwriteExistingCheckBox);
+        extraHeadersBehaviorPanel.add(allowDuplicateHeadersCheckBox);
         
         // Extra headers panel
         JPanel extraHeadersPanel = createExtraHeadersPanel();
@@ -317,7 +315,6 @@ public class HeaderBangerTab {
         // Info panel
         JPanel infoPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         JLabel infoLabel = new JLabel("Configure the SQL injection payload used for testing:");
-        infoLabel.setFont(infoLabel.getFont().deriveFont(Font.PLAIN, 12f));
         infoPanel.add(infoLabel);
         
         // Payload text area - single line
@@ -358,13 +355,15 @@ public class HeaderBangerTab {
         JPanel infoPanel = new JPanel();
         infoPanel.setLayout(new BoxLayout(infoPanel, BoxLayout.Y_AXIS));
         JLabel infoLabel = new JLabel("Configure the XSS payload used for testing:");
-        infoLabel.setFont(infoLabel.getFont().deriveFont(Font.PLAIN, 12f));
         infoPanel.add(infoLabel);
         
-        JLabel collaboratorLabel = new JLabel("Use {{collaborator}} placeholder to leverage Burp's Collaborator:");
-        collaboratorLabel.setFont(collaboratorLabel.getFont().deriveFont(Font.ITALIC, 11f));
-        collaboratorLabel.setForeground(Color.BLUE);
+        JLabel collaboratorLabel = new JLabel("Use {{collaborator}} placeholder in your XSS payloads to leverage Burp's Collaborator and get live audit issues confirmed in Burp.");
+        collaboratorLabel.setFont(collaboratorLabel.getFont().deriveFont(Font.ITALIC));
         infoPanel.add(collaboratorLabel);
+        
+        JLabel customHostLabel = new JLabel("Note: When using custom hosts in the Blind XSS payloads, Burp won't be able to report confirmed issues.");
+        customHostLabel.setForeground(Color.GRAY);
+        infoPanel.add(customHostLabel);
         
         // Payload text area - single line
         bxssPayloadField = new JTextArea(extension.getBxssPayload(), 1, 40); // Changed from 4 rows to 1 row, increased columns

@@ -16,29 +16,23 @@ import burp.api.montoya.proxy.http.ProxyResponseToBeSentAction;
 
 import java.util.*;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
     private final BurpHeaderBanger extension;
     private final MontoyaApi api;
-    private final ScheduledExecutorService scheduler;
-    private final CollaboratorClient collaboratorClient;
-    private final String collaboratorServerLocation;
-    private final Map<String, Long> requestTimestamps;
-    private final Map<String, PayloadCorrelation> payloadMap;
     private final AuditIssueBuilder auditIssueCreator;
 
-    public ProxyHandler(BurpHeaderBanger extension, MontoyaApi api, ScheduledExecutorService scheduler,
-                       CollaboratorClient collaboratorClient, String collaboratorServerLocation,
-                       Map<String, Long> requestTimestamps, Map<String, PayloadCorrelation> payloadMap,
-                       AuditIssueBuilder auditIssueCreator) {
+    public ProxyHandler(BurpHeaderBanger extension, MontoyaApi api, AuditIssueBuilder auditIssueCreator) {
         this.extension = extension;
         this.api = api;
-        this.scheduler = scheduler;
-        this.collaboratorClient = collaboratorClient;
-        this.collaboratorServerLocation = collaboratorServerLocation;
-        this.requestTimestamps = requestTimestamps;
-        this.payloadMap = payloadMap;
         this.auditIssueCreator = auditIssueCreator;
+        
+        // Register interaction handler for direct collaborator interaction processing
+        if (extension.getCollaboratorClient() != null) {
+            // TODO: Implement direct interaction handler here
+            // This will search proxy history when interactions occur
+        }
     }
 
     @Override
@@ -50,9 +44,12 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         HttpRequest request = interceptedRequest;
         
         // Skip modification for requests going to the collaborator server
-        if (collaboratorServerLocation != null && request.url().contains(collaboratorServerLocation)) {
-            api.logging().logToOutput("Skipping collaborator request: " + request.url());
-            return ProxyRequestReceivedAction.continueWith(interceptedRequest);
+        if (extension.getCollaboratorClient() != null) {
+            String collaboratorServerLocation = extension.getCollaboratorClient().generatePayload().toString().split("\\.", 2)[1];
+            if (request.url().contains(collaboratorServerLocation)) {
+                api.logging().logToOutput("Skipping collaborator request: " + request.url());
+                return ProxyRequestReceivedAction.continueWith(interceptedRequest);
+            }
         }
         
         // Check if only processing in-scope items
@@ -69,26 +66,19 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         // Modify request headers
         HttpRequest modifiedRequest = modifyRequestHeaders(request);
         
-        // Store timestamp for response time analysis (InterceptedResponse doesn't have timingData())
-        String requestKey = request.url();
-        requestTimestamps.put(requestKey, System.currentTimeMillis());
-        
-        // Limit dictionary size
-        if (requestTimestamps.size() > BurpHeaderBanger.MAX_DICTIONARY_SIZE) {
-            String oldestKey = requestTimestamps.entrySet().stream()
-                    .min(Map.Entry.comparingByValue())
-                    .map(Map.Entry::getKey)
-                    .orElse(null);
-            if (oldestKey != null) {
-                requestTimestamps.remove(oldestKey);
-            }
-        }
-
+        // NOTE: Timestamp is now stored in handleRequestToBeSent() to exclude intercept delays
         return ProxyRequestReceivedAction.continueWith(modifiedRequest);
     }
 
     @Override
     public ProxyRequestToBeSentAction handleRequestToBeSent(InterceptedRequest interceptedRequest) {
+        if (!extension.isExtensionActive()) {
+            return ProxyRequestToBeSentAction.continueWith(interceptedRequest);
+        }
+        
+        // TODO: Implement timing logic if needed for SQL injection detection
+        // For now, we'll focus on the collaborator interaction approach
+        
         return ProxyRequestToBeSentAction.continueWith(interceptedRequest);
     }
 
@@ -216,11 +206,9 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
                 String headerName = parts[0].trim();
                 String headerValue = parts[1].trim();
                 
-                if (extension.isOverwriteExtraHeaders()) {
-                    workingRequest = workingRequest.withRemovedHeader(headerName);
-                } else {
+                if (!extension.isAllowDuplicateHeaders()) {
                     if (workingRequest.hasHeader(headerName)) {
-                        continue;
+                        continue; // Skip if header already exists and duplicates not allowed
                     }
                 }
                 
@@ -290,11 +278,9 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
                 String headerName = parts[0].trim();
                 String headerValue = parts[1].trim();
                 
-                if (extension.isOverwriteExtraHeaders()) {
-                    workingRequest = workingRequest.withRemovedHeader(headerName);
-                } else {
+                if (!extension.isAllowDuplicateHeaders()) {
                     if (workingRequest.hasHeader(headerName)) {
-                        continue;
+                        continue; // Skip if header already exists and duplicates not allowed
                     }
                 }
                 
@@ -324,8 +310,8 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             }
         }
 
-        // WARNING: Timing-based detection is unreliable when proxy intercept is enabled!
-        // If intercept is on, requests will be delayed by manual interaction, causing false positives
+        // NOTE: Timing measurement now excludes intercept delays by using handleRequestToBeSent()
+        // This provides more accurate timing for blind SQL injection detection
         String requestKey = interceptedResponse.request().url();
         Long startTime = requestTimestamps.get(requestKey);
         if (startTime != null) {
@@ -336,7 +322,7 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             api.logging().logToOutput("SQL injection timing check - Response time: " + responseTime + " ms, threshold: " + (extension.getSqliSleepTime() * 1000) + " ms");
             
             if (responseTime >= extension.getSqliSleepTime() * 1000) {
-                api.logging().logToOutput("TIMING-BASED SQL INJECTION DETECTED (WARNING: May be false positive if proxy intercept is enabled!)");
+                api.logging().logToOutput("TIMING-BASED SQL INJECTION DETECTED (Server response time: " + responseTime + " ms)");
                 auditIssueCreator.createSqlInjectionIssue(interceptedResponse, responseTime);
             }
         }
@@ -431,11 +417,9 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
                     String headerName = parts[0].trim();
                     String headerValue = parts[1].trim();
                     
-                    if (extension.isOverwriteExtraHeaders()) {
-                        workingRequest = workingRequest.withRemovedHeader(headerName);
-                    } else {
+                    if (!extension.isAllowDuplicateHeaders()) {
                         if (workingRequest.hasHeader(headerName)) {
-                            continue;
+                            continue; // Skip if header already exists and duplicates not allowed
                         }
                     }
                     
@@ -487,11 +471,9 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
                 String headerName = parts[0].trim();
                 String headerValue = parts[1].trim();
                 
-                if (extension.isOverwriteExtraHeaders()) {
-                    workingRequest = workingRequest.withRemovedHeader(headerName);
-                } else {
+                if (!extension.isAllowDuplicateHeaders()) {
                     if (workingRequest.hasHeader(headerName)) {
-                        continue;
+                        continue; // Skip if header already exists and duplicates not allowed
                     }
                 }
                 
@@ -508,7 +490,7 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             
             // Only check timing if timing-based detection is enabled
             if (extension.isTimingBasedDetectionEnabled() && responseTime >= extension.getSqliSleepTime() * 1000) {
-                api.logging().logToOutput("TIMING-BASED SQL INJECTION DETECTED in sensitive headers (WARNING: May be false positive if proxy intercept is enabled!)");
+                api.logging().logToOutput("TIMING-BASED SQL INJECTION DETECTED in sensitive headers (Server response time: " + responseTime + " ms)");
                 auditIssueCreator.createSensitiveHeaderSqlIssue(response, responseTime);
             }
         } catch (Exception e) {

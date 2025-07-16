@@ -232,14 +232,14 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                 String headerName = parts[0].trim();
                 String headerValue = parts[1].trim();
                 
-                // Special handling for extra headers - they should be governed by the overwrite setting
+                // Special handling for extra headers - they should be governed by the allow duplicates setting
                 boolean isExtraHeader = extension.getExtraHeaders().stream()
                         .anyMatch(eh -> eh.equalsIgnoreCase(headerToAdd));
                 
-                // For extra headers, check the overwrite setting
+                // For extra headers, check the allow duplicates setting
                 if (isExtraHeader) {
-                    if (!extension.isOverwriteExtraHeaders()) {
-                        // If overwrite is disabled, check if header already exists
+                    if (!extension.isAllowDuplicateHeaders()) {
+                        // If duplicates are not allowed, check if header already exists
                         boolean exists = originalHeaders.stream()
                                 .anyMatch(h -> h.name().equalsIgnoreCase(headerName));
                         if (exists) {

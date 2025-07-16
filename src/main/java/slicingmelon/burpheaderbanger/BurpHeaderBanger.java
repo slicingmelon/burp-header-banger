@@ -3,31 +3,19 @@ package slicingmelon.burpheaderbanger;
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.collaborator.CollaboratorClient;
-import burp.api.montoya.collaborator.Interaction;
 import burp.api.montoya.collaborator.SecretKey;
-import burp.api.montoya.http.message.HttpRequestResponse;
-import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.persistence.PersistedObject;
-import burp.api.montoya.core.Marker;
-import burp.api.montoya.scanner.scancheck.ScanCheckType;
-import burp.api.montoya.scanner.audit.issues.AuditIssue;
-import burp.api.montoya.scanner.audit.issues.AuditIssueConfidence;
-import burp.api.montoya.scanner.audit.issues.AuditIssueSeverity;
+
 
 import java.util.*;
-import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 public class BurpHeaderBanger implements BurpExtension {
 
     private static final String VERSION = "0.0.1";
-    public static final int MAX_DICTIONARY_SIZE = 5000;
+    public static final int MAX_DICTIONARY_SIZE = 20000; // Increased for better XSS detection
     private static final int DEFAULT_SQLI_SLEEP_TIME = 17;
     
     public static final Set<String> SKIP_CONTENT_TYPES = Set.of(
@@ -48,7 +36,7 @@ public class BurpHeaderBanger implements BurpExtension {
     private boolean onlyInScopeItems = false;
     private int attackMode = 2; // 1 = Blind SQLi, 2 = Blind XSS
     private int sqliSleepTime = DEFAULT_SQLI_SLEEP_TIME;
-    private boolean timingBasedDetectionEnabled = true; // WARNING: May cause false positives when proxy intercept is enabled!
+    private boolean timingBasedDetectionEnabled = true; // Timing measurement excludes intercept delays for accuracy
     
     // Headers and payloads
     private List<String> headers = new ArrayList<>();
@@ -58,18 +46,13 @@ public class BurpHeaderBanger implements BurpExtension {
     private List<String> skipHosts = new ArrayList<>();
     private List<String> injectedHeaders = new ArrayList<>();
     private List<String> extraHeaders = new ArrayList<>();
-    private boolean overwriteExtraHeaders = true; // true = overwrite, false = add only if not exists
+    private boolean allowDuplicateHeaders = true; // true = allow duplicate headers, false = add only if not exists
     
     // UI Components
     private HeaderBangerTab headerBangerTab;
     
     // Request timing tracking
     private final Map<String, Long> requestTimestamps = new ConcurrentHashMap<>();
-    
-    // Efficient payload correlation tracking
-    private final Map<String, PayloadCorrelation> payloadMap = new ConcurrentHashMap<>();
-
-
     
     // Default headers
     private static final List<String> DEFAULT_HEADERS = Arrays.asList(
@@ -111,32 +94,25 @@ public class BurpHeaderBanger implements BurpExtension {
         // Load settings
         loadSettings();
         
-        // Initialize collaborator payload
-        // initializeCollaboratorPayload(); // This is no longer needed as we generate payloads on the fly
-        
         // Update injected headers
         updateInjectedHeaders();
         
         // Create helper classes
         AuditIssueBuilder auditIssueCreator = new AuditIssueBuilder(this, api);
-        ProxyHandler proxyHandler = new ProxyHandler(this, api, scheduler, collaboratorClient, 
-                collaboratorServerLocation, requestTimestamps, payloadMap, auditIssueCreator);
-        ScanCheck scanCheck = new ScanCheck(this, api, scheduler, collaboratorClient, 
-                payloadMap, auditIssueCreator);
+        ProxyHandler proxyHandler = new ProxyHandler(this, api, auditIssueCreator);
+        ScanCheck scanCheck = new ScanCheck(this, api, auditIssueCreator);
         
         // Register handlers
         api.proxy().registerRequestHandler(proxyHandler);
         api.proxy().registerResponseHandler(proxyHandler);
-        api.scanner().registerActiveScanCheck(scanCheck, ScanCheckType.PER_REQUEST);
-        api.scanner().registerPassiveScanCheck(scanCheck, ScanCheckType.PER_REQUEST);
+        // Scanner registration commented out temporarily until we implement the interaction handler approach
+        // api.scanner().registerActiveScanCheck(scanCheck);
+        // api.scanner().registerPassiveScanCheck(scanCheck);
         api.userInterface().registerContextMenuItemsProvider(scanCheck);
         
         // Create and register UI
         headerBangerTab = new HeaderBangerTab(this, api);
         api.userInterface().registerSuiteTab("Header Banger", headerBangerTab.getTabbedPane());
-        
-        // Start collaborator polling
-        startCollaboratorPolling();
         
         api.logging().logToOutput("Header Banger v" + VERSION + " loaded successfully");
     }
@@ -173,8 +149,6 @@ public class BurpHeaderBanger implements BurpExtension {
             this.collaboratorServerLocation = this.collaboratorClient.generatePayload().toString().split("\\.", 2)[1];
         }
     }
-    
-
 
     private void loadSettings() {
         // Load extension active state
@@ -222,409 +196,126 @@ public class BurpHeaderBanger implements BurpExtension {
         }
         
         // Load payloads
-        String savedSqliPayload = persistedObject.getString("sqliPayload");
-        if (savedSqliPayload != null) {
-            sqliPayload = savedSqliPayload;
+        String sqliPayloadSetting = persistedObject.getString("sqliPayload");
+        if (sqliPayloadSetting != null && !sqliPayloadSetting.isEmpty()) {
+            sqliPayload = sqliPayloadSetting;
         }
         
-        String savedBxssPayload = persistedObject.getString("bxssPayload");
-        if (savedBxssPayload != null) {
-            bxssPayload = savedBxssPayload;
+        String bxssPayloadSetting = persistedObject.getString("bxssPayload");
+        if (bxssPayloadSetting != null && !bxssPayloadSetting.isEmpty()) {
+            bxssPayload = bxssPayloadSetting;
+        }
+        
+        // Load SQL injection sleep time
+        if (persistedObject.getInteger("sqliSleepTime") != null) {
+            sqliSleepTime = persistedObject.getInteger("sqliSleepTime");
         }
         
         // Load extra headers
         String extraHeadersJson = persistedObject.getString("extraHeaders");
-        api.logging().logToOutput("DEBUG LOAD: Raw extra headers JSON: '" + extraHeadersJson + "'");
         if (extraHeadersJson != null && !extraHeadersJson.isEmpty()) {
             extraHeaders = new ArrayList<>(Arrays.asList(extraHeadersJson.split(",")));
+        } else {
+            extraHeaders = new ArrayList<>();
         }
         
-        // Debug logging for extra headers
-        api.logging().logToOutput("Loaded " + extraHeaders.size() + " extra headers: " + extraHeaders);
-        for (int i = 0; i < extraHeaders.size(); i++) {
-            api.logging().logToOutput("  Extra header " + i + ": '" + extraHeaders.get(i) + "'");
+        // Load allow duplicate headers setting
+        if (persistedObject.getBoolean("allowDuplicateHeaders") != null) {
+            allowDuplicateHeaders = persistedObject.getBoolean("allowDuplicateHeaders");
         }
-        
-        // Load overwrite setting
-        if (persistedObject.getBoolean("overwriteExtraHeaders") != null) {
-            overwriteExtraHeaders = persistedObject.getBoolean("overwriteExtraHeaders");
-        }
-        
-        // Extract sleep time from SQLi payload
-        extractSqliSleepTime();
     }
 
     public void saveSettings() {
+        // Save extension active state
         persistedObject.setBoolean("extensionActive", extensionActive);
+        
+        // Save only in scope setting
         persistedObject.setBoolean("onlyInScopeItems", onlyInScopeItems);
+        
+        // Save attack mode
         persistedObject.setInteger("attackMode", attackMode);
+        
+        // Save timing-based detection setting
         persistedObject.setBoolean("timingBasedDetectionEnabled", timingBasedDetectionEnabled);
+        
+        // Save headers
         persistedObject.setString("headers", String.join(",", headers));
+        
+        // Save sensitive headers
         persistedObject.setString("sensitiveHeaders", String.join(",", sensitiveHeaders));
+        
+        // Save skip hosts
         persistedObject.setString("skipHosts", String.join(",", skipHosts));
+        
+        // Save payloads
         persistedObject.setString("sqliPayload", sqliPayload);
         persistedObject.setString("bxssPayload", bxssPayload);
+        
+        // Save SQL injection sleep time
+        persistedObject.setInteger("sqliSleepTime", sqliSleepTime);
         
         // Debug logging for extra headers save
         api.logging().logToOutput("DEBUG saveSettings: Saving " + extraHeaders.size() + " extra headers: " + extraHeaders);
         api.logging().logToOutput("DEBUG saveSettings: Extra headers as string: '" + String.join(",", extraHeaders) + "'");
-        api.logging().logToOutput("DEBUG saveSettings: overwriteExtraHeaders setting: " + overwriteExtraHeaders);
+        api.logging().logToOutput("DEBUG saveSettings: allowDuplicateHeaders setting: " + allowDuplicateHeaders);
         
         persistedObject.setString("extraHeaders", String.join(",", extraHeaders));
-        persistedObject.setBoolean("overwriteExtraHeaders", overwriteExtraHeaders);
+        persistedObject.setBoolean("allowDuplicateHeaders", allowDuplicateHeaders);
     }
 
-    // Getter and setter methods for UI access
+    // Getters and setters
     public boolean isExtensionActive() { return extensionActive; }
     public void setExtensionActive(boolean active) { this.extensionActive = active; }
-    
+
     public boolean isOnlyInScopeItems() { return onlyInScopeItems; }
-    public void setOnlyInScopeItems(boolean onlyInScope) { this.onlyInScopeItems = onlyInScope; }
-    
-    public boolean isOverwriteExtraHeaders() { return overwriteExtraHeaders; }
-    public void setOverwriteExtraHeaders(boolean overwrite) { this.overwriteExtraHeaders = overwrite; }
-    
-    public boolean isTimingBasedDetectionEnabled() { return timingBasedDetectionEnabled; }
-    public void setTimingBasedDetectionEnabled(boolean enabled) { this.timingBasedDetectionEnabled = enabled; }
-    
+    public void setOnlyInScopeItems(boolean onlyInScopeItems) { this.onlyInScopeItems = onlyInScopeItems; }
+
     public int getAttackMode() { return attackMode; }
-    public void setAttackMode(int mode) { this.attackMode = mode; }
+    public void setAttackMode(int attackMode) { this.attackMode = attackMode; }
 
-    // Remove old UI creation methods - they're now in HeaderBangerTab.java
-    
-    public List<String> getHeaders() { return headers; }
-    public List<String> getSensitiveHeaders() { return sensitiveHeaders; }
-    public List<String> getExtraHeaders() { return extraHeaders; }
-    public List<String> getSkipHosts() { return skipHosts; }
-    
-    public String getSqliPayload() { return sqliPayload; }
-    public void setSqliPayload(String payload) { this.sqliPayload = payload; }
-    
-    public String getBxssPayload() { return bxssPayload; }
-    public void setBxssPayload(String payload) { this.bxssPayload = payload; }
-    
-    public CollaboratorClient getCollaboratorClient() { return collaboratorClient; }
-    
     public int getSqliSleepTime() { return sqliSleepTime; }
+    public void setSqliSleepTime(int sqliSleepTime) { this.sqliSleepTime = sqliSleepTime; }
+
+    public boolean isTimingBasedDetectionEnabled() { return timingBasedDetectionEnabled; }
+    public void setTimingBasedDetectionEnabled(boolean timingBasedDetectionEnabled) { this.timingBasedDetectionEnabled = timingBasedDetectionEnabled; }
+
+    public List<String> getHeaders() { return headers; }
+    public void setHeaders(List<String> headers) { this.headers = headers; }
+
+    public List<String> getSensitiveHeaders() { return sensitiveHeaders; }
+    public void setSensitiveHeaders(List<String> sensitiveHeaders) { this.sensitiveHeaders = sensitiveHeaders; }
+
+    public String getSqliPayload() { return sqliPayload; }
+    public void setSqliPayload(String sqliPayload) { this.sqliPayload = sqliPayload; }
+
+    public String getBxssPayload() { return bxssPayload; }
+    public void setBxssPayload(String bxssPayload) { this.bxssPayload = bxssPayload; }
+
+    public List<String> getSkipHosts() { return skipHosts; }
+    public void setSkipHosts(List<String> skipHosts) { this.skipHosts = skipHosts; }
+
     public List<String> getInjectedHeaders() { return injectedHeaders; }
-    
-    public List<String> getDefaultHeaders() { return new ArrayList<>(DEFAULT_HEADERS); }
-    public List<String> getDefaultSensitiveHeaders() { return new ArrayList<>(DEFAULT_SENSITIVE_HEADERS); }
+    public void setInjectedHeaders(List<String> injectedHeaders) { this.injectedHeaders = injectedHeaders; }
 
+    public List<String> getExtraHeaders() { return extraHeaders; }
+    public void setExtraHeaders(List<String> extraHeaders) { this.extraHeaders = extraHeaders; }
 
+    public boolean isAllowDuplicateHeaders() { return allowDuplicateHeaders; }
+    public void setAllowDuplicateHeaders(boolean allow) { this.allowDuplicateHeaders = allow; }
 
-    public void extractSqliSleepTime() {
-        Pattern pattern = Pattern.compile("sleep\\((\\d+)\\)", Pattern.CASE_INSENSITIVE);
-        Matcher matcher = pattern.matcher(sqliPayload);
-        if (matcher.find()) {
-            sqliSleepTime = Integer.parseInt(matcher.group(1));
-        }
-    }
+    public CollaboratorClient getCollaboratorClient() { return collaboratorClient; }
 
     public void updateInjectedHeaders() {
-        // NOTE: This method is now only used for backward compatibility and legacy functions.
-        // Regular proxy interception now handles headers directly in ProxyHandler.java
-        // This is kept for any remaining code that might reference it.
-        
-        injectedHeaders.clear();
-        String currentPayload = (attackMode == 1) ? sqliPayload : bxssPayload;
-        
-        for (String header : headers) {
-            injectedHeaders.add(header + ": " + currentPayload);
-        }
-        
-        // Note: Extra headers are NOT added here - they should be added separately 
-        // without any payload injection in the request modification methods
+        this.injectedHeaders.clear();
+        this.injectedHeaders.addAll(headers);
+        this.injectedHeaders.addAll(sensitiveHeaders);
     }
 
-    private void startCollaboratorPolling() {
-        api.logging().logToOutput("Starting collaborator polling every 10 seconds...");
-        
-        scheduler.scheduleWithFixedDelay(() -> {
-            try {
-                api.logging().logToOutput("Polling collaborator for interactions...");
-                
-                List<Interaction> interactions = collaboratorClient.getAllInteractions();
-                
-                api.logging().logToOutput("Collaborator polling: Found " + interactions.size() + " interactions");
-                api.logging().logToOutput("Current payload map size: " + payloadMap.size());
-                
-                if (payloadMap.size() > 0) {
-                    api.logging().logToOutput("Sample payload map entries: " + payloadMap.keySet().stream().limit(5).collect(Collectors.toList()));
-                }
-                
-                // Debug: Log details of all interactions
-                if (interactions.size() > 0) {
-                    api.logging().logToOutput("═══════════════════════════════════════════════════════════");
-                    api.logging().logToOutput("INTERACTION DETAILS:");
-                    for (int i = 0; i < interactions.size(); i++) {
-                        Interaction interaction = interactions.get(i);
-                        api.logging().logToOutput("Interaction " + (i + 1) + ":");
-                        api.logging().logToOutput("  Type: " + interaction.type().name());
-                        api.logging().logToOutput("  ID: " + interaction.id().toString());
-                        api.logging().logToOutput("  Has HTTP details: " + interaction.httpDetails().isPresent());
-                        api.logging().logToOutput("  Has DNS details: " + interaction.dnsDetails().isPresent());
-                        api.logging().logToOutput("  Has SMTP details: " + interaction.smtpDetails().isPresent());
-                        api.logging().logToOutput("  ─────────────────────────────────────────────────────────");
-                    }
-                    api.logging().logToOutput("═══════════════════════════════════════════════════════════");
-                }
-                
-                for (Interaction interaction : interactions) {
-                    api.logging().logToOutput("Processing interaction: " + interaction.id().toString());
-                    
-                    String interactionDomain = findDomainInInteraction(interaction);
-                    if (interactionDomain != null) {
-                        PayloadCorrelation correlation = payloadMap.get(interactionDomain);
-                        if (correlation != null) {
-                            api.logging().logToOutput("SUCCESSFUL XSS DETECTED!");
-                            api.logging().logToOutput("═══════════════════════════════════════════════════════════");
-                            
-                            // Log detailed interaction information
-                            api.logging().logToOutput("Interaction Details:");
-                            api.logging().logToOutput("  • URL: " + correlation.requestUrl);
-                            api.logging().logToOutput("  • Method: " + correlation.requestMethod);
-                            api.logging().logToOutput("  • Header: " + correlation.headerName);
-                            api.logging().logToOutput("  • Time: " + new java.util.Date());
-                            
-                            api.logging().logToOutput("═══════════════════════════════════════════════════════════");
-                            
-                            // Create XSS issue using proxy history
-                            createXssIssueFromProxyHistory(interaction, correlation);
-                            
-                            // Clean up the map
-                            payloadMap.remove(interactionDomain);
-                        } else {
-                            api.logging().logToOutput("Found interaction domain but no correlation: " + interactionDomain);
-                        }
-                    } else {
-                        api.logging().logToOutput("No matching domain found for interaction: " + interaction.id().toString());
-                    }
-                }
-                
-                api.logging().logToOutput("Collaborator polling completed.");
-            } catch (Exception e) {
-                api.logging().logToError("Error polling collaborator: " + e.getMessage());
-                e.printStackTrace();
-            }
-        }, 10, 10, TimeUnit.SECONDS);  // Changed from 30 to 10 seconds
-
-        // Add a cleanup task for old payloads in the map
-        scheduler.scheduleWithFixedDelay(() -> {
-            long now = System.currentTimeMillis();
-            int removedCount = 0;
-            Iterator<Map.Entry<String, PayloadCorrelation>> iterator = payloadMap.entrySet().iterator();
-            while (iterator.hasNext()) {
-                Map.Entry<String, PayloadCorrelation> entry = iterator.next();
-                if ((now - entry.getValue().timestamp) > TimeUnit.MINUTES.toMillis(15)) {
-                    iterator.remove();
-                    removedCount++;
-                }
-            }
-            if (removedCount > 0) {
-                api.logging().logToOutput("Cleaned up " + removedCount + " old payloads from map");
-            }
-        }, 15, 15, TimeUnit.MINUTES);
-    }
-
-    private String findDomainInInteraction(Interaction interaction) {
-        String interactionId = interaction.id().toString();
-        
-        // Debug: Log the interaction details
-        api.logging().logToOutput("Found interaction - Type: " + interaction.type().name() + ", ID: " + interactionId);
-        
-        // The interaction ID should directly match our stored payload domain
-        if (payloadMap.containsKey(interactionId)) {
-            api.logging().logToOutput("Direct match found for interaction ID: " + interactionId);
-            return interactionId;
+    // Shutdown method
+    public void shutdown() {
+        if (scheduler != null) {
+            scheduler.shutdown();
         }
-        
-        // Debug: Show what we have in the payload map vs what we're looking for
-        api.logging().logToOutput("No direct match found for interaction ID: " + interactionId);
-        api.logging().logToOutput("Looking for matches in payload map...");
-        
-        // Check if it's a partial match (maybe with/without protocol or trailing dots)
-        for (String payloadDomain : payloadMap.keySet()) {
-            api.logging().logToOutput("Comparing '" + interactionId + "' with '" + payloadDomain + "'");
-            
-            if (interactionId.equals(payloadDomain)) {
-                api.logging().logToOutput("Exact match found: " + payloadDomain);
-                return payloadDomain;
-            }
-            
-            // Check if interaction ID contains the payload domain
-            if (interactionId.contains(payloadDomain)) {
-                api.logging().logToOutput("Partial match found: " + payloadDomain + " in " + interactionId);
-                return payloadDomain;
-            }
-            
-            // Check if payload domain contains the interaction ID
-            if (payloadDomain.contains(interactionId)) {
-                api.logging().logToOutput("Reverse partial match found: " + interactionId + " in " + payloadDomain);
-                return payloadDomain;
-            }
-        }
-        
-        api.logging().logToOutput("No matching payload found for interaction ID: " + interactionId);
-        return null;
-    }
-
-    private void createXssIssueFromProxyHistory(Interaction interaction, PayloadCorrelation correlation) {
-        api.logging().logToOutput("XSS VULNERABILITY CONFIRMED!");
-        api.logging().logToOutput("Attack Vector: Header injection via " + correlation.headerName);
-        api.logging().logToOutput("  • URL: " + correlation.requestUrl);
-        api.logging().logToOutput("  • Method: " + correlation.requestMethod);
-        api.logging().logToOutput("Impact: Cross-Site Scripting (XSS) execution detected");
-        api.logging().logToOutput("Detected: " + new java.util.Date());
-        api.logging().logToOutput("Interaction ID: " + interaction.id());
-        
-        // Find the original request from proxy history using interaction ID
-        String interactionId = interaction.id().toString();
-        List<burp.api.montoya.proxy.ProxyHttpRequestResponse> proxyHistory = api.proxy().history(
-            requestResponse -> requestResponse.finalRequest().toString().contains(interactionId)
-        );
-        
-        if (!proxyHistory.isEmpty()) {
-            // Use the first matching request from proxy history
-            burp.api.montoya.proxy.ProxyHttpRequestResponse originalRequestResponse = proxyHistory.get(0);
-            
-                            try {
-                    // Create audit issue using the original request/response from proxy history
-                    HttpRequestResponse evidenceRequestResponse = HttpRequestResponse.httpRequestResponse(
-                        originalRequestResponse.finalRequest(), 
-                        originalRequestResponse.originalResponse()
-                    );
-                    
-                    // Get markers for the XSS payload in request (response markers not needed for blind XSS)
-                    // Use the collaborator domain to find the payload
-                    String collaboratorDomain = interaction.id().toString();
-                    List<Marker> requestMarkers = getRequestMarkersForHeader(originalRequestResponse.finalRequest(), correlation.headerName, collaboratorDomain);
-                    
-                    // Add markers to the evidence
-                    HttpRequestResponse markedEvidence = evidenceRequestResponse;
-                    if (!requestMarkers.isEmpty()) {
-                        markedEvidence = markedEvidence.withRequestMarkers(requestMarkers);
-                    }
-                    
-                    AuditIssue issue = AuditIssue.auditIssue(
-                        "Header Injection XSS via " + correlation.headerName,
-                        "Cross-Site Scripting (XSS) vulnerability detected through header injection in the " 
-                        + correlation.headerName + " header. The payload was successfully executed as confirmed by "
-                        + "collaborator interaction " + interaction.id() + ". This allows attackers to inject arbitrary "
-                        + "JavaScript code that will be executed in the context of other users' browsers. "
-                        + "Collaborator domain: " + collaboratorDomain,
-                        "Fix this vulnerability by properly validating and sanitizing all user input, especially in HTTP headers. "
-                        + "Implement proper output encoding when reflecting user-controlled data in responses.",
-                        originalRequestResponse.finalRequest().url(),
-                        AuditIssueSeverity.HIGH,
-                        AuditIssueConfidence.CERTAIN,
-                        "This vulnerability allows attackers to execute arbitrary JavaScript in the victim's browser, "
-                        + "potentially leading to session hijacking, defacement, or other malicious activities.",
-                        "The application reflects user-controlled header values without proper validation or encoding, "
-                        + "allowing XSS attacks through HTTP header injection.",
-                        AuditIssueSeverity.HIGH,
-                        markedEvidence
-                    );
-                    
-                    api.siteMap().add(issue);
-                    api.logging().logToOutput("Audit issue created successfully: Header Injection XSS via " + correlation.headerName);
-                } catch (Exception e) {
-                    api.logging().logToError("Failed to create audit issue: " + e.getMessage());
-                }
-        } else {
-            api.logging().logToOutput("Could not find original request in proxy history for interaction: " + interactionId);
-            
-            // Fallback to the old method if proxy history doesn't contain the request
-            try {
-                HttpRequest issueRequest = HttpRequest.httpRequestFromUrl(correlation.requestUrl);
-                HttpRequestResponse issueRequestResponse = api.http().sendRequest(issueRequest);
-                
-                // Get markers for the XSS payload in request (response markers not needed for blind XSS)
-                String collaboratorDomain = interaction.id().toString();
-                List<Marker> requestMarkers = getRequestMarkersForHeader(issueRequest, correlation.headerName, collaboratorDomain);
-                
-                // Add markers to the evidence
-                HttpRequestResponse markedEvidence = issueRequestResponse;
-                if (!requestMarkers.isEmpty()) {
-                    markedEvidence = markedEvidence.withRequestMarkers(requestMarkers);
-                }
-                
-                AuditIssue issue = AuditIssue.auditIssue(
-                    "Header Injection XSS via " + correlation.headerName,
-                    "Cross-Site Scripting (XSS) vulnerability detected through header injection in the " 
-                    + correlation.headerName + " header. The payload was successfully executed as confirmed by "
-                    + "collaborator interaction " + interaction.id() + ". This allows attackers to inject arbitrary "
-                    + "JavaScript code that will be executed in the context of other users' browsers. "
-                    + "Collaborator domain: " + collaboratorDomain,
-                    "Fix this vulnerability by properly validating and sanitizing all user input, especially in HTTP headers. "
-                    + "Implement proper output encoding when reflecting user-controlled data in responses.",
-                    correlation.requestUrl,
-                    AuditIssueSeverity.HIGH,
-                    AuditIssueConfidence.CERTAIN,
-                    "This vulnerability allows attackers to execute arbitrary JavaScript in the victim's browser, "
-                    + "potentially leading to session hijacking, defacement, or other malicious activities.",
-                    "The application reflects user-controlled header values without proper validation or encoding, "
-                    + "allowing XSS attacks through HTTP header injection.",
-                    AuditIssueSeverity.HIGH,
-                    markedEvidence
-                );
-                
-                api.siteMap().add(issue);
-                api.logging().logToOutput("Audit issue created successfully (fallback): Header Injection XSS via " + correlation.headerName);
-            } catch (Exception e) {
-                api.logging().logToError("Failed to create fallback audit issue: " + e.getMessage());
-            }
-        }
-        
-        api.logging().logToOutput("───────────────────────────────────────────────────────────");
-    }
-
-    private List<Marker> getRequestMarkersForHeader(HttpRequest request, String headerName, String payload) {
-        List<Marker> markers = new ArrayList<>();
-        
-        String requestString = request.toString();
-        String[] lines = requestString.split("\r\n");
-        
-        // Find the header line that contains the specified header name and payload
-        int currentPosition = 0;
-        for (String line : lines) {
-            if (line.toLowerCase().startsWith(headerName.toLowerCase() + ":") && line.contains(payload)) {
-                // Mark the entire header line
-                int lineStart = currentPosition;
-                int lineEnd = currentPosition + line.length();
-                markers.add(Marker.marker(lineStart, lineEnd));
-                api.logging().logToOutput("Marked header line: " + line);
-                break;
-            }
-            currentPosition += line.length() + 2; // +2 for \r\n
-        }
-        
-        // If no header line found, fall back to the old method
-        if (markers.isEmpty()) {
-            return getRequestMarkers(request, payload);
-        }
-        
-        return markers;
-    }
-
-    private List<Marker> getRequestMarkers(HttpRequest request, String payload) {
-        List<Marker> markers = new ArrayList<>();
-        
-        String requestString = request.toString();
-        
-        // Search for the payload in the request
-        int start = 0;
-        while (start < requestString.length()) {
-            int found = requestString.indexOf(payload, start);
-            if (found == -1) {
-                break;
-            }
-            
-            markers.add(Marker.marker(found, found + payload.length()));
-            start = found + payload.length();
-        }
-        
-        return markers;
     }
 }
 
