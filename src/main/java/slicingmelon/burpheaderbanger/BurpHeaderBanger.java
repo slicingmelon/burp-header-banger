@@ -113,11 +113,69 @@ public class BurpHeaderBanger implements BurpExtension {
         // api.scanner().registerPassiveScanCheck(scanCheck);
         api.userInterface().registerContextMenuItemsProvider(scanCheck);
         
+        // Start simple collaborator interaction handler
+        if (collaboratorClient != null) {
+            startCollaboratorInteractionHandler(auditIssueCreator);
+        }
+        
         // Create and register UI
         headerBangerTab = new HeaderBangerTab(this, api);
         api.userInterface().registerSuiteTab("Header Banger", headerBangerTab.getTabbedPane());
         
         api.logging().logToOutput("Header Banger v" + VERSION + " loaded successfully");
+    }
+    
+    private void startCollaboratorInteractionHandler(AuditIssueBuilder auditIssueCreator) {
+        // Simple interaction handler that checks for interactions every 10 seconds
+        scheduler.scheduleAtFixedRate(() -> {
+            try {
+                // Get all interactions
+                var interactions = collaboratorClient.getAllInteractions();
+                
+                if (!interactions.isEmpty()) {
+                    api.logging().logToOutput("Found " + interactions.size() + " collaborator interactions");
+                    
+                    for (var interaction : interactions) {
+                        String interactionId = interaction.id().toString();
+                        
+                        // Search proxy history for requests containing this interaction ID
+                        var proxyHistory = api.proxy().history(
+                            requestResponse -> requestResponse.finalRequest().toString().contains(interactionId)
+                        );
+                        
+                        if (!proxyHistory.isEmpty()) {
+                            // Find the payload correlation data by searching for key containing interaction ID
+                            PayloadCorrelation correlation = null;
+                            String correlationKey = null;
+                            
+                            for (String key : payloadMap.keySet()) {
+                                if (key.contains(interactionId)) {
+                                    correlation = payloadMap.get(key);
+                                    correlationKey = key;
+                                    break;
+                                }
+                            }
+                            
+                            if (correlation != null) {
+                                api.logging().logToOutput("Found XSS interaction: " + interactionId + " for " + correlation.headerName);
+                                auditIssueCreator.createXssIssue(interaction, correlation);
+                                
+                                // Remove from payload map to avoid duplicate issues
+                                payloadMap.remove(correlationKey);
+                            } else {
+                                api.logging().logToOutput("Interaction found but no correlation data: " + interactionId);
+                            }
+                        } else {
+                            api.logging().logToOutput("Interaction found but no matching request in proxy history: " + interactionId);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                api.logging().logToError("Error checking collaborator interactions: " + e.getMessage());
+            }
+        }, 10, 10, java.util.concurrent.TimeUnit.SECONDS);
+        
+        api.logging().logToOutput("Started collaborator interaction handler (checking every 10 seconds)");
     }
 
     private void initializeCollaboratorClient() {
@@ -143,13 +201,13 @@ public class BurpHeaderBanger implements BurpExtension {
                 persistedObject.setString("collaboratorSecretKey", this.collaboratorClient.getSecretKey().toString());
             }
             
-            this.collaboratorServerLocation = this.collaboratorClient.generatePayload().toString().split("\\.", 2)[1];
+            this.collaboratorServerLocation = this.collaboratorClient.generatePayload().toString();
             api.logging().logToOutput("Collaborator client initialized successfully");
         } catch (Exception e) {
             api.logging().logToError("Failed to initialize collaborator client: " + e.getMessage());
             // Fallback to creating a new client
             this.collaboratorClient = api.collaborator().createClient();
-            this.collaboratorServerLocation = this.collaboratorClient.generatePayload().toString().split("\\.", 2)[1];
+            this.collaboratorServerLocation = this.collaboratorClient.generatePayload().toString();
         }
     }
 

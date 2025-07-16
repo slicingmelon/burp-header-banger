@@ -41,7 +41,7 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         
         // Initialize collaborator server location
         if (collaboratorClient != null) {
-            this.collaboratorServerLocation = collaboratorClient.generatePayload().toString().split("\\.", 2)[1];
+            this.collaboratorServerLocation = collaboratorClient.generatePayload().toString();
         } else {
             this.collaboratorServerLocation = null;
         }
@@ -62,12 +62,9 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         HttpRequest request = interceptedRequest;
         
         // Skip modification for requests going to the collaborator server
-        if (extension.getCollaboratorClient() != null) {
-            String collaboratorServerLocation = extension.getCollaboratorClient().generatePayload().toString().split("\\.", 2)[1];
-            if (request.url().contains(collaboratorServerLocation)) {
-                api.logging().logToOutput("Skipping collaborator request: " + request.url());
-                return ProxyRequestReceivedAction.continueWith(interceptedRequest);
-            }
+        if (collaboratorServerLocation != null && request.url().contains("oastify.com")) {
+            api.logging().logToOutput("Skipping collaborator request: " + request.url());
+            return ProxyRequestReceivedAction.continueWith(interceptedRequest);
         }
         
         // Check if only processing in-scope items
