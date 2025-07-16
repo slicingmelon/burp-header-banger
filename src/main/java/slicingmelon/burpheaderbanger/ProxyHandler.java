@@ -60,6 +60,9 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         }
 
         HttpRequest request = interceptedRequest;
+        String host = request.httpService().host();
+        String url = request.url();
+        api.logging().logToOutput("[ProxyHandler] Checking exclusion for host: " + host + ", url: " + url);
         
         // Skip modification for requests going to the collaborator server
         if (collaboratorServerLocation != null && request.url().contains("oastify.com")) {
@@ -73,9 +76,8 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         }
 
         // Check if host or URL should be excluded
-        String host = request.httpService().host();
-        String url = request.url();
         if (extension.isExcluded(url, host)) {
+            api.logging().logToOutput("[ProxyHandler] Skipping request due to exclusion for host: " + host + ", url: " + url);
             return ProxyRequestReceivedAction.continueWith(interceptedRequest);
         }
 

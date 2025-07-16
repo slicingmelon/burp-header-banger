@@ -315,6 +315,8 @@ public class BurpHeaderBanger implements BurpExtension {
         if (persistedObject.getBoolean("allowDuplicateHeaders") != null) {
             allowDuplicateHeaders = persistedObject.getBoolean("allowDuplicateHeaders");
         }
+        // Always refresh the exclusions table if the UI is already created
+        if (headerBangerTab != null) headerBangerTab.refreshExclusionsTable();
     }
 
     public void saveSettings() {
@@ -407,6 +409,8 @@ public class BurpHeaderBanger implements BurpExtension {
 
     public CollaboratorClient getCollaboratorClient() { return collaboratorClient; }
 
+    public HeaderBangerTab getHeaderBangerTab() { return headerBangerTab; }
+
     public void updateInjectedHeaders() {
         this.injectedHeaders.clear();
         this.injectedHeaders.addAll(headers);
@@ -431,17 +435,25 @@ public class BurpHeaderBanger implements BurpExtension {
     }
     
     public void addExclusion(String pattern, boolean isRegex) {
+        // Prevent duplicates
+        for (Exclusion exclusion : exclusions) {
+            if (exclusion.getPattern().equals(pattern) && exclusion.isRegex() == isRegex) {
+                api.logging().logToOutput("Exclusion already exists: " + pattern + " (isRegex=" + isRegex + ")");
+                return;
+            }
+        }
         exclusions.add(new Exclusion(true, pattern, isRegex));
+        api.logging().logToOutput("Added exclusion: " + pattern + " (isRegex=" + isRegex + "). Exclusions now: " + exclusions);
+        if (headerBangerTab != null) headerBangerTab.refreshExclusionsTable();
+        saveSettings();
     }
     
     public void addHostExclusion(String host) {
-        // Add as literal pattern for host exclusion
-        exclusions.add(new Exclusion(true, host, false));
+        addExclusion(host, false);
     }
     
     public void addUrlExclusion(String url) {
-        // Add as literal pattern for URL exclusion
-        exclusions.add(new Exclusion(true, url, false));
+        addExclusion(url, false);
     }
 
     public void extractSqliSleepTime() {

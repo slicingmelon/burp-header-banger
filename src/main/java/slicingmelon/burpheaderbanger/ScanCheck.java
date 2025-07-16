@@ -89,7 +89,13 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
     private void scanSelectedRequest(ContextMenuEvent event) {
         Optional<HttpRequestResponse> selectedMessage = event.selectedRequestResponses().stream().findFirst();
         if (selectedMessage.isPresent()) {
-            api.logging().logToOutput("Context menu scan initiated for: " + selectedMessage.get().request().url());
+            String url = selectedMessage.get().request().url();
+            String host = selectedMessage.get().request().httpService().host();
+            if (extension.isExcluded(url, host)) {
+                api.logging().logToOutput("Header Banger: Skipping scan for excluded host/url: " + host + " / " + url);
+                return;
+            }
+            api.logging().logToOutput("Context menu scan initiated for: " + url);
             
             // Create a simplified sensitive headers scan for context menu
             scheduler.execute(() -> {

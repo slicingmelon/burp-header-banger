@@ -449,7 +449,7 @@ public class HeaderBangerTab {
 
     private JPanel createExclusionsPanel() {
         JPanel panel = new JPanel(new BorderLayout());
-        
+
         // Create table model
         exclusionsTableModel = new DefaultTableModel(new String[]{"Enabled", "Exclusion", "Pattern Type"}, 0) {
             @Override
@@ -457,20 +457,30 @@ public class HeaderBangerTab {
                 if (columnIndex == 0) return Boolean.class;
                 return String.class;
             }
-            
+
             @Override
             public boolean isCellEditable(int row, int column) {
-                return column != 2; // Only make Enabled and Exclusion columns editable
+                // Allow editing of all columns
+                return true;
             }
         };
-        
+
         // Load initial exclusions
         refreshExclusionsTable();
-        
-        exclusionsTable = new JTable(exclusionsTableModel);
+
+        exclusionsTable = new JTable(exclusionsTableModel) {
+            @Override
+            public TableCellEditor getCellEditor(int row, int column) {
+                if (column == 2) {
+                    JComboBox<String> comboBox = new JComboBox<>(new String[]{"Literal", "Regex"});
+                    return new DefaultCellEditor(comboBox);
+                }
+                return super.getCellEditor(row, column);
+            }
+        };
         exclusionsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         exclusionsTable.setRowHeight(25);
-        
+
         // Add double-click editing
         exclusionsTable.addMouseListener(new MouseAdapter() {
             @Override
@@ -484,37 +494,37 @@ public class HeaderBangerTab {
                 }
             }
         });
-        
+
         // Add change listener to update exclusions when table changes
         exclusionsTableModel.addTableModelListener(e -> {
             updateExclusionsFromTable();
         });
-        
+
         JScrollPane scrollPane = new JScrollPane(exclusionsTable);
         scrollPane.setPreferredSize(new Dimension(600, 300));
         panel.add(scrollPane, BorderLayout.CENTER);
-        
+
         // Controls panel
         JPanel controlsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        
+
         JButton addButton = new JButton("Add");
         addButton.addActionListener(_ -> addExclusion());
         controlsPanel.add(addButton);
-        
+
         JButton deleteButton = new JButton("Delete");
         deleteButton.addActionListener(_ -> deleteExclusion());
         controlsPanel.add(deleteButton);
-        
+
         JButton clearButton = new JButton("Clear");
         clearButton.addActionListener(_ -> clearExclusions());
         controlsPanel.add(clearButton);
-        
+
         JButton resetButton = new JButton("Reset to Defaults");
         resetButton.addActionListener(_ -> resetExclusionsToDefaults());
         controlsPanel.add(resetButton);
-        
+
         panel.add(controlsPanel, BorderLayout.SOUTH);
-        
+
         return panel;
     }
 
@@ -709,9 +719,7 @@ public class HeaderBangerTab {
             boolean enabled = (Boolean) exclusionsTableModel.getValueAt(i, 0);
             String pattern = (String) exclusionsTableModel.getValueAt(i, 1);
             String patternType = (String) exclusionsTableModel.getValueAt(i, 2);
-            
-            boolean isRegex = patternType != null && patternType.startsWith("Regex:");
-            
+            boolean isRegex = "Regex".equals(patternType);
             if (pattern != null && !pattern.trim().isEmpty()) {
                 extension.getExclusions().add(new Exclusion(enabled, pattern.trim(), isRegex));
             }
@@ -720,7 +728,7 @@ public class HeaderBangerTab {
     }
     
     private void addExclusion() {
-        exclusionsTableModel.addRow(new Object[]{true, "", "Literal: "});
+        exclusionsTableModel.addRow(new Object[]{true, "", "Literal"});
         refreshExclusionsTable();
     }
     
@@ -743,20 +751,21 @@ public class HeaderBangerTab {
             exclusionsTableModel.addRow(new Object[]{
                 exclusion.isEnabled(),
                 exclusion.getPattern(),
-                exclusion.isRegex() ? "Regex: " + exclusion.getPattern() : "Literal: " + exclusion.getPattern()
+                exclusion.isRegex() ? "Regex" : "Literal"
             });
         }
         refreshExclusionsTable();
     }
 
-    private void refreshExclusionsTable() {
+    public void refreshExclusionsTable() {
         exclusionsTableModel.setRowCount(0);
         for (Exclusion exclusion : extension.getExclusions()) {
             exclusionsTableModel.addRow(new Object[]{
                 exclusion.isEnabled(),
                 exclusion.getPattern(),
-                exclusion.isRegex() ? "Regex: " + exclusion.getPattern() : "Literal: " + exclusion.getPattern()
+                exclusion.isRegex() ? "Regex" : "Literal"
             });
         }
+        api.logging().logToOutput("[HeaderBangerTab] Refreshed exclusions table. Current exclusions: " + extension.getExclusions());
     }
 } 
