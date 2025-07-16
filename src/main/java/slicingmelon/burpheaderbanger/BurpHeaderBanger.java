@@ -54,6 +54,9 @@ public class BurpHeaderBanger implements BurpExtension {
     // Request timing tracking
     private final Map<String, Long> requestTimestamps = new ConcurrentHashMap<>();
     
+    // Payload tracking for XSS detection
+    private final Map<String, PayloadCorrelation> payloadMap = new ConcurrentHashMap<>();
+    
     // Default headers
     private static final List<String> DEFAULT_HEADERS = Arrays.asList(
             "User-Agent",
@@ -99,13 +102,13 @@ public class BurpHeaderBanger implements BurpExtension {
         
         // Create helper classes
         AuditIssueBuilder auditIssueCreator = new AuditIssueBuilder(this, api);
-        ProxyHandler proxyHandler = new ProxyHandler(this, api, auditIssueCreator);
-        ScanCheck scanCheck = new ScanCheck(this, api, auditIssueCreator);
+        ProxyHandler proxyHandler = new ProxyHandler(this, api, auditIssueCreator, scheduler, collaboratorClient, payloadMap, requestTimestamps);
+        ScanCheck scanCheck = new ScanCheck(this, api, scheduler, collaboratorClient, payloadMap, auditIssueCreator);
         
         // Register handlers
         api.proxy().registerRequestHandler(proxyHandler);
         api.proxy().registerResponseHandler(proxyHandler);
-        // Scanner registration commented out temporarily until we implement the interaction handler approach
+        // Scanner registration commented out temporarily until we verify proper usage
         // api.scanner().registerActiveScanCheck(scanCheck);
         // api.scanner().registerPassiveScanCheck(scanCheck);
         api.userInterface().registerContextMenuItemsProvider(scanCheck);
@@ -309,6 +312,34 @@ public class BurpHeaderBanger implements BurpExtension {
         this.injectedHeaders.clear();
         this.injectedHeaders.addAll(headers);
         this.injectedHeaders.addAll(sensitiveHeaders);
+    }
+
+    public List<String> getDefaultHeaders() { return new ArrayList<>(DEFAULT_HEADERS); }
+    public List<String> getDefaultSensitiveHeaders() { return new ArrayList<>(DEFAULT_SENSITIVE_HEADERS); }
+
+    public Map<String, Long> getRequestTimestamps() { return requestTimestamps; }
+    public Map<String, PayloadCorrelation> getPayloadMap() { return payloadMap; }
+
+    public void extractSqliSleepTime() {
+        // Extract sleep time from SQL injection payload
+        String payload = sqliPayload.toLowerCase();
+        if (payload.contains("sleep(")) {
+            int start = payload.indexOf("sleep(") + 6;
+            int end = payload.indexOf(")", start);
+            if (end > start) {
+                try {
+                    String sleepTimeStr = payload.substring(start, end);
+                    int extractedTime = Integer.parseInt(sleepTimeStr);
+                    if (extractedTime > 0 && extractedTime <= 60) {
+                        this.sqliSleepTime = extractedTime;
+                        api.logging().logToOutput("Extracted SQL injection sleep time: " + extractedTime + " seconds");
+                    }
+                } catch (NumberFormatException e) {
+                    api.logging().logToOutput("Could not extract sleep time from payload, using default: " + DEFAULT_SQLI_SLEEP_TIME);
+                    this.sqliSleepTime = DEFAULT_SQLI_SLEEP_TIME;
+                }
+            }
+        }
     }
 
     // Shutdown method

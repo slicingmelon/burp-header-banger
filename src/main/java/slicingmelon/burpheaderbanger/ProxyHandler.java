@@ -22,11 +22,29 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
     private final BurpHeaderBanger extension;
     private final MontoyaApi api;
     private final AuditIssueBuilder auditIssueCreator;
+    private final ScheduledExecutorService scheduler;
+    private final CollaboratorClient collaboratorClient;
+    private final Map<String, PayloadCorrelation> payloadMap;
+    private final Map<String, Long> requestTimestamps;
+    private final String collaboratorServerLocation;
 
-    public ProxyHandler(BurpHeaderBanger extension, MontoyaApi api, AuditIssueBuilder auditIssueCreator) {
+    public ProxyHandler(BurpHeaderBanger extension, MontoyaApi api, AuditIssueBuilder auditIssueCreator, 
+                       ScheduledExecutorService scheduler, CollaboratorClient collaboratorClient, 
+                       Map<String, PayloadCorrelation> payloadMap, Map<String, Long> requestTimestamps) {
         this.extension = extension;
         this.api = api;
         this.auditIssueCreator = auditIssueCreator;
+        this.scheduler = scheduler;
+        this.collaboratorClient = collaboratorClient;
+        this.payloadMap = payloadMap;
+        this.requestTimestamps = requestTimestamps;
+        
+        // Initialize collaborator server location
+        if (collaboratorClient != null) {
+            this.collaboratorServerLocation = collaboratorClient.generatePayload().toString().split("\\.", 2)[1];
+        } else {
+            this.collaboratorServerLocation = null;
+        }
         
         // Register interaction handler for direct collaborator interaction processing
         if (extension.getCollaboratorClient() != null) {
@@ -76,8 +94,12 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             return ProxyRequestToBeSentAction.continueWith(interceptedRequest);
         }
         
-        // TODO: Implement timing logic if needed for SQL injection detection
-        // For now, we'll focus on the collaborator interaction approach
+        // Store timestamp for SQL injection timing detection (excludes intercept delays)
+        if (extension.getAttackMode() == 1 && extension.isTimingBasedDetectionEnabled()) {
+            String requestKey = interceptedRequest.url();
+            requestTimestamps.put(requestKey, System.currentTimeMillis());
+            api.logging().logToOutput("Stored timestamp for SQL injection timing: " + requestKey);
+        }
         
         return ProxyRequestToBeSentAction.continueWith(interceptedRequest);
     }
