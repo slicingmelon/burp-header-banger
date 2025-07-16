@@ -72,9 +72,10 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             return ProxyRequestReceivedAction.continueWith(interceptedRequest);
         }
 
-        // Check if host should be skipped
+        // Check if host or URL should be excluded
         String host = request.httpService().host();
-        if (extension.getSkipHosts().contains(host)) {
+        String url = request.url();
+        if (extension.isExcluded(url, host)) {
             return ProxyRequestReceivedAction.continueWith(interceptedRequest);
         }
 

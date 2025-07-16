@@ -79,6 +79,10 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
         excludeHostItem.addActionListener(_ -> excludeHostFromScans(event));
         menuItems.add(excludeHostItem);
         
+        JMenuItem excludeUrlItem = new JMenuItem("Exclude URL from Header Banger scans");
+        excludeUrlItem.addActionListener(_ -> excludeUrlFromScans(event));
+        menuItems.add(excludeUrlItem);
+        
         return menuItems;
     }
 
@@ -188,12 +192,32 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
         Optional<HttpRequestResponse> selectedMessage = event.selectedRequestResponses().stream().findFirst();
         if (selectedMessage.isPresent()) {
             String host = selectedMessage.get().request().httpService().host();
-            if (!extension.getSkipHosts().contains(host)) {
-                extension.getSkipHosts().add(host);
+            String url = selectedMessage.get().request().url();
+            
+            // Check if host is already excluded
+            if (extension.isExcluded(url, host)) {
+                api.logging().logToOutput("Host " + host + " is already excluded");
+            } else {
+                extension.addHostExclusion(host);
                 extension.saveSettings();
                 api.logging().logToOutput("Host " + host + " added to the exclusion list");
+            }
+        }
+    }
+    
+    private void excludeUrlFromScans(ContextMenuEvent event) {
+        Optional<HttpRequestResponse> selectedMessage = event.selectedRequestResponses().stream().findFirst();
+        if (selectedMessage.isPresent()) {
+            String url = selectedMessage.get().request().url();
+            String host = selectedMessage.get().request().httpService().host();
+            
+            // Check if URL is already excluded
+            if (extension.isExcluded(url, host)) {
+                api.logging().logToOutput("URL " + url + " is already excluded");
             } else {
-                api.logging().logToOutput("Host " + host + " is already in the exclusion list");
+                extension.addUrlExclusion(url);
+                extension.saveSettings();
+                api.logging().logToOutput("URL " + url + " added to the exclusion list");
             }
         }
     }

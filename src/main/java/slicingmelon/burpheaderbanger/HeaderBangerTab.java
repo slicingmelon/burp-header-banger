@@ -3,8 +3,13 @@ package slicingmelon.burpheaderbanger;
 import burp.api.montoya.MontoyaApi;
 
 import javax.swing.*;
+import javax.swing.table.DefaultTableModel;
+import javax.swing.table.TableCellEditor;
+import javax.swing.table.TableCellRenderer;
 import java.awt.*;
 import java.awt.event.ItemEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 
 public class HeaderBangerTab {
     private final BurpHeaderBanger extension;
@@ -25,6 +30,8 @@ public class HeaderBangerTab {
     private JList<String> sensitiveHeadersList;
     private JList<String> hostsList;
     private JList<String> extraHeadersList;
+    private JTable exclusionsTable;
+    private DefaultTableModel exclusionsTableModel;
     private JTextField newHeaderField;
     private JTextField newSensitiveHeaderField;
     private JTextField newHostField;
@@ -48,11 +55,11 @@ public class HeaderBangerTab {
         // Create tabs
         JPanel attackModePanel = createAttackModePanel();
         JPanel headersPanel = createHeadersAndPayloadsPanel();
-        JPanel excludedHostsPanel = createExcludedHostsPanel();
+        JPanel exclusionsPanel = createExclusionsPanel();
         
         tabbedPane.addTab("Attack Mode", attackModePanel);
         tabbedPane.addTab("Headers and Payloads", headersPanel);
-        tabbedPane.addTab("Excluded Hosts", excludedHostsPanel);
+        tabbedPane.addTab("Exclusions", exclusionsPanel);
     }
 
     private JPanel createAttackModePanel() {
@@ -439,29 +446,78 @@ public class HeaderBangerTab {
         return panel;
     }
 
-    private JPanel createExcludedHostsPanel() {
+    private JPanel createExclusionsPanel() {
         JPanel panel = new JPanel(new BorderLayout());
         
-        hostsListModel = new DefaultListModel<>();
-        extension.getSkipHosts().forEach(hostsListModel::addElement);
-        hostsList = new JList<>(hostsListModel);
-        panel.add(new JScrollPane(hostsList), BorderLayout.CENTER);
+        // Create table model
+        exclusionsTableModel = new DefaultTableModel(new String[]{"Enabled", "Exclusion", "Regex"}, 0) {
+            @Override
+            public Class<?> getColumnClass(int columnIndex) {
+                if (columnIndex == 0) return Boolean.class;
+                if (columnIndex == 2) return Boolean.class;
+                return String.class;
+            }
+            
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return true;
+            }
+        };
         
-        JPanel controlsPanel = new JPanel();
-        newHostField = new JTextField(20);
-        controlsPanel.add(newHostField);
+        // Load exclusions into table
+        for (Exclusion exclusion : extension.getExclusions()) {
+            exclusionsTableModel.addRow(new Object[]{
+                exclusion.isEnabled(),
+                exclusion.getPattern(),
+                exclusion.isRegex()
+            });
+        }
+        
+        exclusionsTable = new JTable(exclusionsTableModel);
+        exclusionsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        exclusionsTable.setRowHeight(25);
+        
+        // Add double-click editing
+        exclusionsTable.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2) {
+                    int row = exclusionsTable.getSelectedRow();
+                    int col = exclusionsTable.getSelectedColumn();
+                    if (row >= 0 && col >= 0) {
+                        exclusionsTable.editCellAt(row, col);
+                    }
+                }
+            }
+        });
+        
+        // Add change listener to update exclusions when table changes
+        exclusionsTableModel.addTableModelListener(e -> {
+            updateExclusionsFromTable();
+        });
+        
+        JScrollPane scrollPane = new JScrollPane(exclusionsTable);
+        scrollPane.setPreferredSize(new Dimension(600, 300));
+        panel.add(scrollPane, BorderLayout.CENTER);
+        
+        // Controls panel
+        JPanel controlsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         
         JButton addButton = new JButton("Add");
-        addButton.addActionListener(_ -> addHost());
+        addButton.addActionListener(_ -> addExclusion());
         controlsPanel.add(addButton);
         
         JButton deleteButton = new JButton("Delete");
-        deleteButton.addActionListener(_ -> deleteHost());
+        deleteButton.addActionListener(_ -> deleteExclusion());
         controlsPanel.add(deleteButton);
         
         JButton clearButton = new JButton("Clear");
-        clearButton.addActionListener(_ -> clearHosts());
+        clearButton.addActionListener(_ -> clearExclusions());
         controlsPanel.add(clearButton);
+        
+        JButton resetButton = new JButton("Reset to Defaults");
+        resetButton.addActionListener(_ -> resetExclusionsToDefaults());
+        controlsPanel.add(resetButton);
         
         panel.add(controlsPanel, BorderLayout.SOUTH);
         
@@ -650,5 +706,50 @@ public class HeaderBangerTab {
         extension.getSkipHosts().clear();
         hostsListModel.clear();
         extension.saveSettings();
+    }
+    
+    // Exclusion management methods
+    private void updateExclusionsFromTable() {
+        extension.getExclusions().clear();
+        for (int i = 0; i < exclusionsTableModel.getRowCount(); i++) {
+            boolean enabled = (Boolean) exclusionsTableModel.getValueAt(i, 0);
+            String pattern = (String) exclusionsTableModel.getValueAt(i, 1);
+            boolean isRegex = (Boolean) exclusionsTableModel.getValueAt(i, 2);
+            
+            if (pattern != null && !pattern.trim().isEmpty()) {
+                extension.getExclusions().add(new Exclusion(enabled, pattern.trim(), isRegex));
+            }
+        }
+        extension.saveSettings();
+    }
+    
+    private void addExclusion() {
+        exclusionsTableModel.addRow(new Object[]{true, "", false});
+        updateExclusionsFromTable();
+    }
+    
+    private void deleteExclusion() {
+        int selectedRow = exclusionsTable.getSelectedRow();
+        if (selectedRow >= 0) {
+            exclusionsTableModel.removeRow(selectedRow);
+            updateExclusionsFromTable();
+        }
+    }
+    
+    private void clearExclusions() {
+        exclusionsTableModel.setRowCount(0);
+        updateExclusionsFromTable();
+    }
+    
+    private void resetExclusionsToDefaults() {
+        exclusionsTableModel.setRowCount(0);
+        for (Exclusion exclusion : extension.getDefaultExclusions()) {
+            exclusionsTableModel.addRow(new Object[]{
+                exclusion.isEnabled(),
+                exclusion.getPattern(),
+                exclusion.isRegex()
+            });
+        }
+        updateExclusionsFromTable();
     }
 } 
