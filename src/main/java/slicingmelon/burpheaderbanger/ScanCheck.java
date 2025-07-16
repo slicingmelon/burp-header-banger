@@ -201,6 +201,9 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                 extension.addHostExclusion(host);
                 extension.saveSettings();
                 api.logging().logToOutput("Host " + host + " added to the exclusion list");
+                
+                // Refresh the exclusions table in the UI
+                extension.getHeaderBangerTab().refreshExclusionsTable();
             }
         }
     }
@@ -218,6 +221,9 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                 extension.addUrlExclusion(url);
                 extension.saveSettings();
                 api.logging().logToOutput("URL " + url + " added to the exclusion list");
+                
+                // Refresh the exclusions table in the UI
+                extension.getHeaderBangerTab().refreshExclusionsTable();
             }
         }
     }

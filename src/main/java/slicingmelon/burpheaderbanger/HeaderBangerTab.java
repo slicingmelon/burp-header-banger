@@ -10,6 +10,7 @@ import java.awt.*;
 import java.awt.event.ItemEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.Optional;
 
 public class HeaderBangerTab {
     private final BurpHeaderBanger extension;
@@ -450,28 +451,21 @@ public class HeaderBangerTab {
         JPanel panel = new JPanel(new BorderLayout());
         
         // Create table model
-        exclusionsTableModel = new DefaultTableModel(new String[]{"Enabled", "Exclusion", "Regex"}, 0) {
+        exclusionsTableModel = new DefaultTableModel(new String[]{"Enabled", "Exclusion", "Pattern Type"}, 0) {
             @Override
             public Class<?> getColumnClass(int columnIndex) {
                 if (columnIndex == 0) return Boolean.class;
-                if (columnIndex == 2) return Boolean.class;
                 return String.class;
             }
             
             @Override
             public boolean isCellEditable(int row, int column) {
-                return true;
+                return column != 2; // Only make Enabled and Exclusion columns editable
             }
         };
         
-        // Load exclusions into table
-        for (Exclusion exclusion : extension.getExclusions()) {
-            exclusionsTableModel.addRow(new Object[]{
-                exclusion.isEnabled(),
-                exclusion.getPattern(),
-                exclusion.isRegex()
-            });
-        }
+        // Load initial exclusions
+        refreshExclusionsTable();
         
         exclusionsTable = new JTable(exclusionsTableModel);
         exclusionsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -714,7 +708,9 @@ public class HeaderBangerTab {
         for (int i = 0; i < exclusionsTableModel.getRowCount(); i++) {
             boolean enabled = (Boolean) exclusionsTableModel.getValueAt(i, 0);
             String pattern = (String) exclusionsTableModel.getValueAt(i, 1);
-            boolean isRegex = (Boolean) exclusionsTableModel.getValueAt(i, 2);
+            String patternType = (String) exclusionsTableModel.getValueAt(i, 2);
+            
+            boolean isRegex = patternType != null && patternType.startsWith("Regex:");
             
             if (pattern != null && !pattern.trim().isEmpty()) {
                 extension.getExclusions().add(new Exclusion(enabled, pattern.trim(), isRegex));
@@ -724,21 +720,21 @@ public class HeaderBangerTab {
     }
     
     private void addExclusion() {
-        exclusionsTableModel.addRow(new Object[]{true, "", false});
-        updateExclusionsFromTable();
+        exclusionsTableModel.addRow(new Object[]{true, "", "Literal: "});
+        refreshExclusionsTable();
     }
     
     private void deleteExclusion() {
         int selectedRow = exclusionsTable.getSelectedRow();
         if (selectedRow >= 0) {
             exclusionsTableModel.removeRow(selectedRow);
-            updateExclusionsFromTable();
+            refreshExclusionsTable();
         }
     }
     
     private void clearExclusions() {
         exclusionsTableModel.setRowCount(0);
-        updateExclusionsFromTable();
+        refreshExclusionsTable();
     }
     
     private void resetExclusionsToDefaults() {
@@ -747,9 +743,20 @@ public class HeaderBangerTab {
             exclusionsTableModel.addRow(new Object[]{
                 exclusion.isEnabled(),
                 exclusion.getPattern(),
-                exclusion.isRegex()
+                exclusion.isRegex() ? "Regex: " + exclusion.getPattern() : "Literal: " + exclusion.getPattern()
             });
         }
-        updateExclusionsFromTable();
+        refreshExclusionsTable();
+    }
+
+    private void refreshExclusionsTable() {
+        exclusionsTableModel.setRowCount(0);
+        for (Exclusion exclusion : extension.getExclusions()) {
+            exclusionsTableModel.addRow(new Object[]{
+                exclusion.isEnabled(),
+                exclusion.getPattern(),
+                exclusion.isRegex() ? "Regex: " + exclusion.getPattern() : "Literal: " + exclusion.getPattern()
+            });
+        }
     }
 } 
