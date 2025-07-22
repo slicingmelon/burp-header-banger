@@ -101,9 +101,6 @@ public class BurpHeaderBanger implements BurpExtension {
         // Set extension name
         api.extension().setName("Header Banger");
         
-        // Load settings
-        loadSettings();
-        
         // Update injected headers
         updateInjectedHeaders();
         
@@ -111,6 +108,16 @@ public class BurpHeaderBanger implements BurpExtension {
         AuditIssueBuilder auditIssueCreator = new AuditIssueBuilder(this, api);
         ProxyHandler proxyHandler = new ProxyHandler(this, api, auditIssueCreator, scheduler, collaboratorClient, payloadMap, requestTimestamps);
         ScanCheck scanCheck = new ScanCheck(this, api, scheduler, collaboratorClient, payloadMap, auditIssueCreator);
+        
+        // Create and register UI *before* loading settings that might affect it
+        headerBangerTab = new HeaderBangerTab(this, api);
+        api.userInterface().registerSuiteTab("Header Banger", headerBangerTab.getTabbedPane());
+        
+        // Load settings now that the UI is available
+        loadSettings();
+        
+        // Explicitly refresh the table in the UI to show the loaded exclusions
+        headerBangerTab.refreshExclusionsTable();
         
         // Register handlers
         api.proxy().registerRequestHandler(proxyHandler);
@@ -124,10 +131,6 @@ public class BurpHeaderBanger implements BurpExtension {
         if (collaboratorClient != null) {
             startCollaboratorInteractionHandler(auditIssueCreator);
         }
-        
-        // Create and register UI
-        headerBangerTab = new HeaderBangerTab(this, api);
-        api.userInterface().registerSuiteTab("Header Banger", headerBangerTab.getTabbedPane());
         
         api.logging().logToOutput("Header Banger v" + VERSION + " loaded successfully");
     }
