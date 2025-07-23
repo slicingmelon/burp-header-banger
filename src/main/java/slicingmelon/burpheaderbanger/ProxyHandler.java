@@ -45,11 +45,7 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             this.collaboratorServerLocation = null;
         }
         
-        // Register interaction handler for direct collaborator interaction processing
-        if (extension.getCollaboratorClient() != null) {
-            // TODO: Implement direct interaction handler here
-            // This will search proxy history when interactions occur
-        }
+
     }
 
     @Override

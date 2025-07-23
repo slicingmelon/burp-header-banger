@@ -26,9 +26,9 @@ public class AuditIssueBuilder {
         api.logging().logToOutput("POSSIBLE SQL INJECTION DETECTED!");
         api.logging().logToOutput("═══════════════════════════════════════════════════════════");
         api.logging().logToOutput("Attack Vector: SQL injection via regular headers");
-        api.logging().logToOutput("  • URL: " + interceptedResponse.request().url());
-        api.logging().logToOutput("  • Response Time: " + responseTime + " ms");
-        api.logging().logToOutput("  • Expected Sleep Time: " + extension.getSqliSleepTime() + " seconds");
+        api.logging().logToOutput("URL: " + interceptedResponse.request().url());
+        api.logging().logToOutput("Response Time: " + responseTime + " ms");
+        api.logging().logToOutput("Expected Sleep Time: " + extension.getSqliSleepTime() + " seconds");
         api.logging().logToOutput("Detected: " + new java.util.Date());
         
         // Create proper audit issue using the original request with injected headers
@@ -137,8 +137,8 @@ public class AuditIssueBuilder {
     public void createXssIssue(Interaction interaction, PayloadCorrelation correlation) {
         api.logging().logToOutput("XSS VULNERABILITY CONFIRMED!");
         api.logging().logToOutput("Attack Vector: Header injection via " + correlation.headerName);
-        api.logging().logToOutput("  • URL: " + correlation.requestUrl);
-        api.logging().logToOutput("  • Method: " + correlation.requestMethod);
+        api.logging().logToOutput("URL: " + correlation.requestUrl);
+        api.logging().logToOutput("Method: " + correlation.requestMethod);
         api.logging().logToOutput("Impact: Cross-Site Scripting (XSS) execution detected");
         api.logging().logToOutput("Detected: " + new java.util.Date());
         api.logging().logToOutput("Interaction ID: " + interaction.id());
