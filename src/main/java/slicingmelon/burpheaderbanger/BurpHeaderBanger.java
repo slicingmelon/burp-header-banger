@@ -16,8 +16,7 @@ import javax.swing.SwingUtilities;
 
 public class BurpHeaderBanger implements BurpExtension {
 
-    private static final String VERSION = "0.0.1";
-    public static final int MAX_DICTIONARY_SIZE = 20000; // Increased for better XSS detection
+    private static final String VERSION = "0.0.2";
     private static final int DEFAULT_SQLI_SLEEP_TIME = 17;
     
     public static final Set<String> SKIP_CONTENT_TYPES = Set.of(
@@ -30,7 +29,6 @@ public class BurpHeaderBanger implements BurpExtension {
     private PersistedObject persistedObject;
     private CollaboratorClient collaboratorClient;
     private ScheduledExecutorService scheduler;
-    private String collaboratorServerLocation;
 
     
     // Settings
@@ -207,13 +205,11 @@ public class BurpHeaderBanger implements BurpExtension {
                 persistedObject.setString("collaboratorSecretKey", this.collaboratorClient.getSecretKey().toString());
             }
             
-            this.collaboratorServerLocation = this.collaboratorClient.generatePayload().toString();
             api.logging().logToOutput("Collaborator client initialized successfully");
         } catch (Exception e) {
             api.logging().logToError("Failed to initialize collaborator client: " + e.getMessage());
             // Fallback to creating a new client
             this.collaboratorClient = api.collaborator().createClient();
-            this.collaboratorServerLocation = this.collaboratorClient.generatePayload().toString();
         }
     }
 
