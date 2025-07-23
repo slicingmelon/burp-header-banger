@@ -8,6 +8,8 @@ import java.awt.*;
 import java.awt.event.ItemEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.HashSet;
+import java.util.Set;
 import burp.api.montoya.ui.editor.HttpRequestEditor;
 import burp.api.montoya.ui.editor.HttpResponseEditor;
 
@@ -573,8 +575,8 @@ public class HeaderBangerTab {
         alert403Table = new JTable(alert403TableModel) {
             @Override
             public void changeSelection(int rowIndex, int columnIndex, boolean toggle, boolean extend) {
-                // Show the request/response for the selected row
-                if (rowIndex >= 0 && rowIndex < extension.getAlert403Entries().size()) {
+                // Only show request/response for single selection to avoid confusion
+                if (!toggle && !extend && rowIndex >= 0 && rowIndex < extension.getAlert403Entries().size()) {
                     Alert403Entry entry = extension.getAlert403Entries().get(rowIndex);
                     if (entry.getRequestResponse() != null) {
                         alert403RequestViewer.setRequest(entry.getRequestResponse().request());
@@ -587,7 +589,7 @@ public class HeaderBangerTab {
             }
         };
         
-        alert403Table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        alert403Table.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         alert403Table.setRowHeight(25);
         
         // Add context menu for exclusions
@@ -931,33 +933,89 @@ public class HeaderBangerTab {
     }
     
     private void showAlert403ContextMenu(MouseEvent e) {
-        int row = alert403Table.rowAtPoint(e.getPoint());
-        if (row >= 0) {
-            alert403Table.setRowSelectionInterval(row, row);
+        int clickedRow = alert403Table.rowAtPoint(e.getPoint());
+        if (clickedRow >= 0) {
+            // If clicked row is not selected, select only that row
+            if (!alert403Table.isRowSelected(clickedRow)) {
+                alert403Table.setRowSelectionInterval(clickedRow, clickedRow);
+            }
             
-            JPopupMenu contextMenu = new JPopupMenu();
-            
-            String host = (String) alert403TableModel.getValueAt(row, 1);
-            String pathQuery = (String) alert403TableModel.getValueAt(row, 2);
-            String url = "https://" + host + pathQuery;
-            
-            JMenuItem excludeHostItem = new JMenuItem("Exclude Host from Header Banger scans");
-            excludeHostItem.addActionListener(_ -> {
-                extension.addHostExclusion(host);
-                JOptionPane.showMessageDialog(null, "Host " + host + " has been excluded from Header Banger scans.", 
-                    "Exclusion Added", JOptionPane.INFORMATION_MESSAGE);
-            });
-            contextMenu.add(excludeHostItem);
-            
-            JMenuItem excludeUrlItem = new JMenuItem("Exclude URL from Header Banger scans");
-            excludeUrlItem.addActionListener(_ -> {
-                extension.addUrlExclusion(url);
-                JOptionPane.showMessageDialog(null, "URL " + url + " has been excluded from Header Banger scans.", 
-                    "Exclusion Added", JOptionPane.INFORMATION_MESSAGE);
-            });
-            contextMenu.add(excludeUrlItem);
-            
-            contextMenu.show(alert403Table, e.getX(), e.getY());
+            int[] selectedRows = alert403Table.getSelectedRows();
+            if (selectedRows.length > 0) {
+                JPopupMenu contextMenu = new JPopupMenu();
+                
+                // Get unique hosts and URLs from all selected rows
+                Set<String> uniqueHosts = new HashSet<>();
+                Set<String> uniqueUrls = new HashSet<>();
+                
+                for (int row : selectedRows) {
+                    String host = (String) alert403TableModel.getValueAt(row, 1);
+                    String pathQuery = (String) alert403TableModel.getValueAt(row, 2);
+                    String url = "https://" + host + pathQuery;
+                    
+                    uniqueHosts.add(host);
+                    uniqueUrls.add(url);
+                }
+                
+                // Exclude hosts menu item
+                String hostText = selectedRows.length == 1 ? 
+                    "Exclude Host from Header Banger scans" : 
+                    "Exclude " + uniqueHosts.size() + " Host(s) from Header Banger scans";
+                    
+                JMenuItem excludeHostItem = new JMenuItem(hostText);
+                excludeHostItem.addActionListener(_ -> {
+                    int excludedCount = 0;
+                    StringBuilder excludedHosts = new StringBuilder();
+                    
+                    for (String host : uniqueHosts) {
+                        if (!extension.isExcluded("", host)) { // Check if not already excluded
+                            extension.addHostExclusion(host);
+                            excludedCount++;
+                            if (excludedHosts.length() > 0) excludedHosts.append(", ");
+                            excludedHosts.append(host);
+                        }
+                    }
+                    
+                    if (excludedCount > 0) {
+                        String message = excludedCount == 1 ? 
+                            "Host " + excludedHosts.toString() + " has been excluded from Header Banger scans." :
+                            excludedCount + " host(s) have been excluded from Header Banger scans: " + excludedHosts.toString();
+                        JOptionPane.showMessageDialog(null, message, "Exclusions Added", JOptionPane.INFORMATION_MESSAGE);
+                    } else {
+                        JOptionPane.showMessageDialog(null, "All selected hosts are already excluded.", "No Changes", JOptionPane.INFORMATION_MESSAGE);
+                    }
+                });
+                contextMenu.add(excludeHostItem);
+                
+                // Exclude URLs menu item  
+                String urlText = selectedRows.length == 1 ? 
+                    "Exclude URL from Header Banger scans" : 
+                    "Exclude " + uniqueUrls.size() + " URL(s) from Header Banger scans";
+                    
+                JMenuItem excludeUrlItem = new JMenuItem(urlText);
+                excludeUrlItem.addActionListener(_ -> {
+                    int excludedCount = 0;
+                    
+                    for (String url : uniqueUrls) {
+                        if (!extension.isExcluded(url, "")) { // Check if not already excluded
+                            extension.addUrlExclusion(url);
+                            excludedCount++;
+                        }
+                    }
+                    
+                    if (excludedCount > 0) {
+                        String message = excludedCount == 1 ? 
+                            "URL has been excluded from Header Banger scans." :
+                            excludedCount + " URL(s) have been excluded from Header Banger scans.";
+                        JOptionPane.showMessageDialog(null, message, "Exclusions Added", JOptionPane.INFORMATION_MESSAGE);
+                    } else {
+                        JOptionPane.showMessageDialog(null, "All selected URLs are already excluded.", "No Changes", JOptionPane.INFORMATION_MESSAGE);
+                    }
+                });
+                contextMenu.add(excludeUrlItem);
+                
+                contextMenu.show(alert403Table, e.getX(), e.getY());
+            }
         }
     }
     
