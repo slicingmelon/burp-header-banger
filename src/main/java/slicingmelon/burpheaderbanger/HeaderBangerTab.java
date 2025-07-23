@@ -25,17 +25,14 @@ public class HeaderBangerTab {
     private JButton xssButton;
     private DefaultListModel<String> headersListModel;
     private DefaultListModel<String> sensitiveHeadersListModel;
-    private DefaultListModel<String> hostsListModel;
     private DefaultListModel<String> extraHeadersListModel;
     private JList<String> headersList;
     private JList<String> sensitiveHeadersList;
-    private JList<String> hostsList;
     private JList<String> extraHeadersList;
     private JTable exclusionsTable;
     private DefaultTableModel exclusionsTableModel;
     private JTextField newHeaderField;
     private JTextField newSensitiveHeaderField;
-    private JTextField newHostField;
     private JTextField newExtraHeaderField;
     private JTextArea sqliPayloadField;
     private JTextArea bxssPayloadField;
@@ -675,33 +672,7 @@ public class HeaderBangerTab {
         JOptionPane.showMessageDialog(null, "Blind XSS payload reset to default!", "Success", JOptionPane.INFORMATION_MESSAGE);
     }
 
-    // Host management methods
-    private void addHost() {
-        String newHost = newHostField.getText().trim();
-        if (!newHost.isEmpty() && !extension.getSkipHosts().contains(newHost)) {
-            extension.getSkipHosts().add(newHost);
-            hostsListModel.addElement(newHost);
-            newHostField.setText("");
-            extension.saveSettings();
-        } else {
-            JOptionPane.showMessageDialog(null, "Host already in list or empty");
-        }
-    }
 
-    private void deleteHost() {
-        String selectedHost = hostsList.getSelectedValue();
-        if (selectedHost != null) {
-            extension.getSkipHosts().remove(selectedHost);
-            hostsListModel.removeElement(selectedHost);
-            extension.saveSettings();
-        }
-    }
-
-    private void clearHosts() {
-        extension.getSkipHosts().clear();
-        hostsListModel.clear();
-        extension.saveSettings();
-    }
     
     // Exclusion management methods
     private void updateExclusionsFromTable() {
