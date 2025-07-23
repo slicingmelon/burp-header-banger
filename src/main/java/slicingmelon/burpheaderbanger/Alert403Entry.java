@@ -1,5 +1,7 @@
 package slicingmelon.burpheaderbanger;
 
+import burp.api.montoya.http.message.HttpRequestResponse;
+
 public class Alert403Entry {
     private final String method;
     private final String host;
@@ -7,14 +9,16 @@ public class Alert403Entry {
     private final int statusCode;
     private final String source;
     private final long timestamp;
+    private final HttpRequestResponse requestResponse;
     
-    public Alert403Entry(String method, String host, String pathQuery, int statusCode, String source) {
+    public Alert403Entry(String method, String host, String pathQuery, int statusCode, String source, HttpRequestResponse requestResponse) {
         this.method = method;
         this.host = host;
         this.pathQuery = pathQuery;
         this.statusCode = statusCode;
         this.source = source;
         this.timestamp = System.currentTimeMillis();
+        this.requestResponse = requestResponse;
     }
     
     public String getMethod() {
@@ -43,6 +47,10 @@ public class Alert403Entry {
     
     public String getUrl() {
         return "https://" + host + pathQuery;
+    }
+    
+    public HttpRequestResponse getRequestResponse() {
+        return requestResponse;
     }
     
     @Override

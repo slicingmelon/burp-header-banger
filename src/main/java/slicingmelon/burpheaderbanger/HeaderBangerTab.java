@@ -8,6 +8,10 @@ import java.awt.*;
 import java.awt.event.ItemEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import burp.api.montoya.ui.editor.HttpRequestEditor;
+import burp.api.montoya.ui.editor.HttpResponseEditor;
+
+import static burp.api.montoya.ui.editor.EditorOptions.READ_ONLY;
 
 
 public class HeaderBangerTab {
@@ -30,6 +34,8 @@ public class HeaderBangerTab {
     private DefaultTableModel exclusionsTableModel;
     private JTable alert403Table;
     private DefaultTableModel alert403TableModel;
+    private HttpRequestEditor alert403RequestViewer;
+    private HttpResponseEditor alert403ResponseViewer;
     private JTextField newHeaderField;
     private JTextField newSensitiveHeaderField;
     private JTextField newExtraHeaderField;
@@ -528,24 +534,59 @@ public class HeaderBangerTab {
     
     private JPanel create403AlertsPanel() {
         JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(BorderFactory.createTitledBorder("403 Alerts"));
         
-        // Title and description
-        JPanel titlePanel = new JPanel(new BorderLayout());
-        titlePanel.setBorder(BorderFactory.createTitledBorder("403 Alerts"));
-        
-        JLabel noteLabel = new JLabel("<html><div style='width: 300px;'>Note: This window shows the requests that returned 403 possibly due to your payloads, either exclude these hosts or come up with better obfuscated payloads</div></html>");
+        // Note label at the top
+        JLabel noteLabel = new JLabel("Note: This window shows the requests that returned 403 possibly due to your payloads, either exclude these hosts or come up with better obfuscated payloads");
+        noteLabel.setForeground(Color.GRAY);
         noteLabel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
-        titlePanel.add(noteLabel, BorderLayout.NORTH);
+        panel.add(noteLabel, BorderLayout.NORTH);
+        
+        // Main split pane - table on top, request/response viewers on bottom
+        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
+        splitPane.setResizeWeight(0.5); // Give equal space initially
+        
+        // Top part - table with controls
+        JPanel tablePanel = createAlert403TablePanel();
+        splitPane.setTopComponent(tablePanel);
+        
+        // Bottom part - request/response viewers
+        JPanel viewersPanel = createAlert403ViewersPanel();
+        splitPane.setBottomComponent(viewersPanel);
+        
+        panel.add(splitPane, BorderLayout.CENTER);
+
+        return panel;
+    }
+    
+    private JPanel createAlert403TablePanel() {
+        JPanel panel = new JPanel(new BorderLayout());
         
         // Create 403 alerts table
-        alert403TableModel = new DefaultTableModel(new String[]{"Method", "Host", "Path+Query", "Status Code", "Source"}, 0) {
+        alert403TableModel = new DefaultTableModel(new String[]{"Method", "Host", "Path", "Status Code", "Source"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false; // Read-only table
             }
         };
 
-        alert403Table = new JTable(alert403TableModel);
+        alert403Table = new JTable(alert403TableModel) {
+            @Override
+            public void changeSelection(int rowIndex, int columnIndex, boolean toggle, boolean extend) {
+                // Show the request/response for the selected row
+                if (rowIndex >= 0 && rowIndex < extension.getAlert403Entries().size()) {
+                    Alert403Entry entry = extension.getAlert403Entries().get(rowIndex);
+                    if (entry.getRequestResponse() != null) {
+                        alert403RequestViewer.setRequest(entry.getRequestResponse().request());
+                        if (entry.getRequestResponse().response() != null) {
+                            alert403ResponseViewer.setResponse(entry.getRequestResponse().response());
+                        }
+                    }
+                }
+                super.changeSelection(rowIndex, columnIndex, toggle, extend);
+            }
+        };
+        
         alert403Table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         alert403Table.setRowHeight(25);
         
@@ -567,10 +608,8 @@ public class HeaderBangerTab {
         });
 
         JScrollPane alert403ScrollPane = new JScrollPane(alert403Table);
-        alert403ScrollPane.setPreferredSize(new Dimension(500, 300));
-        
-        titlePanel.add(alert403ScrollPane, BorderLayout.CENTER);
-        panel.add(titlePanel, BorderLayout.CENTER);
+        alert403ScrollPane.setPreferredSize(new Dimension(500, 150));
+        panel.add(alert403ScrollPane, BorderLayout.CENTER);
 
         // Controls panel for 403 alerts
         JPanel alert403ControlsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
@@ -580,7 +619,23 @@ public class HeaderBangerTab {
         alert403ControlsPanel.add(clearAlert403Button);
 
         panel.add(alert403ControlsPanel, BorderLayout.SOUTH);
-
+        
+        return panel;
+    }
+    
+    private JPanel createAlert403ViewersPanel() {
+        // Create HTTP request and response editors
+        alert403RequestViewer = api.userInterface().createHttpRequestEditor(READ_ONLY);
+        alert403ResponseViewer = api.userInterface().createHttpResponseEditor(READ_ONLY);
+        
+        // Create tabbed pane for request/response viewers
+        JTabbedPane tabs = new JTabbedPane();
+        tabs.addTab("Request", alert403RequestViewer.uiComponent());
+        tabs.addTab("Response", alert403ResponseViewer.uiComponent());
+        
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.add(tabs, BorderLayout.CENTER);
+        
         return panel;
     }
 

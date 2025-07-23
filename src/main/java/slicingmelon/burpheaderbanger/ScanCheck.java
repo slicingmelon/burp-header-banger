@@ -164,7 +164,7 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                             String requestHost = finalRequest.httpService().host();
                             String pathQuery = finalRequest.path();
                             
-                            Alert403Entry entry = new Alert403Entry(method, requestHost, pathQuery, 403, "Extensions");
+                            Alert403Entry entry = new Alert403Entry(method, requestHost, pathQuery, 403, "Extensions", response);
                             extension.addAlert403Entry(entry);
                             
                             api.logging().logToOutput("[403_DETECTED] Context menu BXSS scan returned 403: " + method + " " + requestHost + pathQuery);
@@ -202,7 +202,7 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                             String requestHost = modifiedRequest.httpService().host();
                             String pathQuery = modifiedRequest.path();
                             
-                            Alert403Entry entry = new Alert403Entry(method, requestHost, pathQuery, 403, "Extensions");
+                            Alert403Entry entry = new Alert403Entry(method, requestHost, pathQuery, 403, "Extensions", response);
                             extension.addAlert403Entry(entry);
                             
                             api.logging().logToOutput("[403_DETECTED] Context menu SQL injection scan returned 403: " + method + " " + requestHost + pathQuery);

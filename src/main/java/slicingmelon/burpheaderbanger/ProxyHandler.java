@@ -352,7 +352,7 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
                 String requestHost = workingRequest.httpService().host();
                 String pathQuery = workingRequest.path();
                 
-                Alert403Entry entry = new Alert403Entry(method, requestHost, pathQuery, 403, "Extensions");
+                Alert403Entry entry = new Alert403Entry(method, requestHost, pathQuery, 403, "Extensions", response);
                 extension.addAlert403Entry(entry);
                 
                 api.logging().logToOutput("[403_DETECTED] Sensitive headers scan returned 403: " + method + " " + requestHost + pathQuery);
@@ -389,7 +389,13 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             String host = request.httpService().host();
             String pathQuery = request.path(); // This includes path + query parameters
             
-            Alert403Entry entry = new Alert403Entry(method, host, pathQuery, 403, "Proxy");
+            // Create HttpRequestResponse object for the alert
+            var requestResponse = burp.api.montoya.http.message.HttpRequestResponse.httpRequestResponse(
+                interceptedResponse.initiatingRequest(), 
+                interceptedResponse
+            );
+            
+            Alert403Entry entry = new Alert403Entry(method, host, pathQuery, 403, "Proxy", requestResponse);
             extension.addAlert403Entry(entry);
             
             api.logging().logToOutput("[403_DETECTED] Proxy request returned 403: " + method + " " + host + pathQuery);
