@@ -96,11 +96,20 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
         if (selectedMessage.isPresent()) {
             String url = selectedMessage.get().request().url();
             String host = selectedMessage.get().request().httpService().host();
+            
+            api.logging().logToOutput("Context menu scan initiated for: " + url);
+            api.logging().logToOutput("Context menu scan: Checking exclusions for host: " + host + ", url: " + url);
+            
             if (extension.isExcluded(url, host)) {
                 api.logging().logToOutput("Header Banger: Skipping scan for excluded host/url: " + host + " / " + url);
+                api.logging().logToOutput("Current exclusions list size: " + extension.getExclusions().size());
+                for (Exclusion exclusion : extension.getExclusions()) {
+                    api.logging().logToOutput("  - Exclusion: " + exclusion.toString());
+                }
                 return;
             }
-            api.logging().logToOutput("Context menu scan initiated for: " + url);
+            
+            api.logging().logToOutput("Context menu scan: Host/URL not excluded, proceeding with scan");
             
             // Create a simplified sensitive headers scan for context menu  
             scheduler.execute(() -> {
@@ -220,19 +229,26 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
         }
         
         if (host != null && url != null) {
+            final String finalHost = host; // Make final for lambda
             api.logging().logToOutput("[CONTEXT_MENU] Attempting to exclude host: " + host + " from URL: " + url);
             
             // Check if host is already excluded
             if (extension.isExcluded(url, host)) {
                 api.logging().logToOutput("[CONTEXT_MENU] Host " + host + " is already excluded");
+                // Show user feedback
+                SwingUtilities.invokeLater(() -> 
+                    JOptionPane.showMessageDialog(null, "Host " + finalHost + " is already excluded from Header Banger scans.", 
+                        "Already Excluded", JOptionPane.INFORMATION_MESSAGE));
             } else {
                 api.logging().logToOutput("[CONTEXT_MENU] Adding host exclusion for: " + host);
+                // addHostExclusion already handles saving settings and refreshing table
                 extension.addHostExclusion(host);
-                extension.saveSettings();
-                api.logging().logToOutput("[CONTEXT_MENU] Host " + host + " added to the exclusion list");
+                api.logging().logToOutput("[CONTEXT_MENU] Host " + host + " added to the exclusion list. Total exclusions: " + extension.getExclusions().size());
                 
-                // Refresh the exclusions table in the UI
-                extension.getHeaderBangerTab().refreshExclusionsTable();
+                // Show user feedback
+                SwingUtilities.invokeLater(() -> 
+                    JOptionPane.showMessageDialog(null, "Host " + finalHost + " has been excluded from Header Banger scans.", 
+                        "Exclusion Added", JOptionPane.INFORMATION_MESSAGE));
             }
         } else {
             api.logging().logToOutput("[CONTEXT_MENU] No request found in either selected items or message editor");
@@ -260,19 +276,26 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
         }
         
         if (host != null && url != null) {
+            final String finalUrl = url; // Make final for lambda
             api.logging().logToOutput("[CONTEXT_MENU] Attempting to exclude URL: " + url + " from host: " + host);
             
             // Check if URL is already excluded
             if (extension.isExcluded(url, host)) {
                 api.logging().logToOutput("[CONTEXT_MENU] URL " + url + " is already excluded");
+                // Show user feedback
+                SwingUtilities.invokeLater(() -> 
+                    JOptionPane.showMessageDialog(null, "URL " + finalUrl + " is already excluded from Header Banger scans.", 
+                        "Already Excluded", JOptionPane.INFORMATION_MESSAGE));
             } else {
                 api.logging().logToOutput("[CONTEXT_MENU] Adding URL exclusion for: " + url);
+                // addUrlExclusion already handles saving settings and refreshing table
                 extension.addUrlExclusion(url);
-                extension.saveSettings();
-                api.logging().logToOutput("[CONTEXT_MENU] URL " + url + " added to the exclusion list");
+                api.logging().logToOutput("[CONTEXT_MENU] URL " + url + " added to the exclusion list. Total exclusions: " + extension.getExclusions().size());
                 
-                // Refresh the exclusions table in the UI
-                extension.getHeaderBangerTab().refreshExclusionsTable();
+                // Show user feedback
+                SwingUtilities.invokeLater(() -> 
+                    JOptionPane.showMessageDialog(null, "URL " + finalUrl + " has been excluded from Header Banger scans.", 
+                        "Exclusion Added", JOptionPane.INFORMATION_MESSAGE));
             }
         } else {
             api.logging().logToOutput("[CONTEXT_MENU] No request found in either selected items or message editor");

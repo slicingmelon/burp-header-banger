@@ -353,7 +353,16 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
     private void processSensitiveHeadersScan(InterceptedResponse interceptedResponse) {
         HttpRequest originalRequest = interceptedResponse.initiatingRequest();
         
-        api.logging().logToOutput("Processing sensitive headers scan for: " + originalRequest.url());
+        String host = originalRequest.httpService().host();
+        String url = originalRequest.url();
+        
+        api.logging().logToOutput("Processing sensitive headers scan for: " + url);
+        
+        // Check if host or URL should be excluded from sensitive headers scan
+        if (extension.isExcluded(url, host)) {
+            api.logging().logToOutput("[SensitiveHeaders] Skipping sensitive headers scan due to exclusion for host: " + host + ", url: " + url);
+            return;
+        }
         
         // Get host value
         String hostValue = getHeaderValue(originalRequest.headers(), "Host");

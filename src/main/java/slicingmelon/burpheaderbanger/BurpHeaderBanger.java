@@ -12,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.regex.Pattern;
+import javax.swing.SwingUtilities;
 
 public class BurpHeaderBanger implements BurpExtension {
 
@@ -269,6 +270,8 @@ public class BurpHeaderBanger implements BurpExtension {
         
         // Load exclusions
         String exclusionsJson = persistedObject.getString("exclusions");
+        api.logging().logToOutput("DEBUG loadSettings: Loading exclusions from persistence");
+        api.logging().logToOutput("DEBUG loadSettings: Exclusions JSON from persistence: " + exclusionsJson);
         if (exclusionsJson != null && !exclusionsJson.isEmpty()) {
             exclusions = new ArrayList<>();
             String[] exclusionStrings = exclusionsJson.split("\\|\\|");
@@ -277,6 +280,7 @@ public class BurpHeaderBanger implements BurpExtension {
                     exclusions.add(Exclusion.fromJson(exclusionString));
                 }
             }
+            api.logging().logToOutput("DEBUG loadSettings: Loaded " + exclusions.size() + " exclusions from persistence");
         } else {
             // Migrate from old skipHosts or use defaults
             exclusions = new ArrayList<>();
@@ -286,9 +290,11 @@ public class BurpHeaderBanger implements BurpExtension {
                     String regexPattern = host.replace(".", "\\.");
                     exclusions.add(new Exclusion(true, regexPattern, true));
                 }
+                api.logging().logToOutput("DEBUG loadSettings: Migrated " + exclusions.size() + " exclusions from skipHosts");
             } else {
                 // Use default exclusions
                 exclusions = new ArrayList<>(DEFAULT_EXCLUSIONS);
+                api.logging().logToOutput("DEBUG loadSettings: Using " + exclusions.size() + " default exclusions");
             }
         }
         
@@ -351,7 +357,10 @@ public class BurpHeaderBanger implements BurpExtension {
         for (Exclusion exclusion : exclusions) {
             exclusionJsonList.add(exclusion.toJson());
         }
-        persistedObject.setString("exclusions", String.join("||", exclusionJsonList));
+        String exclusionsJsonString = String.join("||", exclusionJsonList);
+        api.logging().logToOutput("DEBUG saveSettings: Saving " + exclusions.size() + " exclusions");
+        api.logging().logToOutput("DEBUG saveSettings: Exclusions JSON: " + exclusionsJsonString);
+        persistedObject.setString("exclusions", exclusionsJsonString);
         
         // Save payloads
         persistedObject.setString("sqliPayload", sqliPayload);
@@ -463,8 +472,27 @@ public class BurpHeaderBanger implements BurpExtension {
         exclusions.add(newExclusion);
         api.logging().logToOutput("Added exclusion: " + pattern + " (regex=" + isRegex + "). Total exclusions: " + exclusions.size());
         
-        if (headerBangerTab != null) headerBangerTab.refreshExclusionsTable();
+        // Save settings immediately after adding
+        api.logging().logToOutput("Saving exclusion settings to persistence...");
         saveSettings();
+        api.logging().logToOutput("Exclusion settings saved. Refreshing UI...");
+        
+        // Refresh UI on the EDT to avoid threading issues
+        api.logging().logToOutput("HeaderBangerTab reference is: " + (headerBangerTab != null ? "NOT NULL" : "NULL"));
+        if (headerBangerTab != null) {
+            // Try both approaches to see which one works
+            SwingUtilities.invokeLater(() -> {
+                api.logging().logToOutput("About to try single exclusion add method");
+                headerBangerTab.addExclusionToTable(newExclusion);
+                
+                // Also try the full refresh as backup
+                api.logging().logToOutput("About to call refreshExclusionsTable() from EDT as backup");
+                headerBangerTab.refreshExclusionsTable();
+                api.logging().logToOutput("Both UI update methods called. Current exclusions count: " + exclusions.size());
+            });
+        } else {
+            api.logging().logToOutput("WARNING: HeaderBangerTab is null, cannot refresh UI");
+        }
     }
     
     public void addHostExclusion(String host) {

@@ -750,12 +750,15 @@ public class HeaderBangerTab {
             exclusionsTableModel.removeTableModelListener(listener);
         }
         
+        api.logging().logToOutput("[HeaderBangerTab] Refreshing exclusions table. Current exclusions count: " + extension.getExclusions().size());
+        
         exclusionsTableModel.setRowCount(0);
         for (Exclusion exclusion : extension.getExclusions()) {
             exclusionsTableModel.addRow(new Object[]{
                 exclusion.isEnabled(),
                 exclusion.getPattern()
             });
+            api.logging().logToOutput("[HeaderBangerTab] Added row to table: " + exclusion.getPattern());
         }
         
         // Re-add the table model listeners
@@ -763,7 +766,53 @@ public class HeaderBangerTab {
             exclusionsTableModel.addTableModelListener(listener);
         }
         
-        api.logging().logToOutput("[HeaderBangerTab] Refreshed exclusions table. Current exclusions: " + extension.getExclusions());
+        // Force table refresh and repaint
+        if (exclusionsTable != null) {
+            exclusionsTable.revalidate();
+            exclusionsTable.repaint();
+            exclusionsTableModel.fireTableDataChanged();
+        }
+        
+        api.logging().logToOutput("[HeaderBangerTab] Exclusions table refreshed successfully. Table row count: " + exclusionsTableModel.getRowCount());
+    }
+    
+    /**
+     * Alternative method to add a single exclusion to the table without rebuilding everything
+     */
+    public void addExclusionToTable(Exclusion exclusion) {
+        api.logging().logToOutput("[HeaderBangerTab] Adding single exclusion to table: " + exclusion.getPattern());
+        
+        if (exclusionsTableModel != null && exclusionsTable != null) {
+            SwingUtilities.invokeLater(() -> {
+                // Check if this exclusion already exists in the table
+                boolean exists = false;
+                for (int i = 0; i < exclusionsTableModel.getRowCount(); i++) {
+                    String existingPattern = (String) exclusionsTableModel.getValueAt(i, 1);
+                    if (exclusion.getPattern().equals(existingPattern)) {
+                        exists = true;
+                        break;
+                    }
+                }
+                
+                if (!exists) {
+                    exclusionsTableModel.addRow(new Object[]{
+                        exclusion.isEnabled(),
+                        exclusion.getPattern()
+                    });
+                    
+                    // Force table update
+                    exclusionsTable.revalidate();
+                    exclusionsTable.repaint();
+                    exclusionsTableModel.fireTableDataChanged();
+                    
+                    api.logging().logToOutput("[HeaderBangerTab] Successfully added exclusion to table. New row count: " + exclusionsTableModel.getRowCount());
+                } else {
+                    api.logging().logToOutput("[HeaderBangerTab] Exclusion already exists in table: " + exclusion.getPattern());
+                }
+            });
+        } else {
+            api.logging().logToOutput("[HeaderBangerTab] Cannot add to table - table model or table is null");
+        }
     }
     
     public void refreshAllLists() {
