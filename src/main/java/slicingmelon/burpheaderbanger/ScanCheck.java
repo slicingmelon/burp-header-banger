@@ -112,7 +112,7 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                         api.logging().logToOutput("Context menu: Processing BXSS for sensitive headers");
                         
                         // BXSS logic for context menu
-                        List<HttpHeader> modifiedHeaders = new ArrayList<>(finalOriginalRequest.headers());
+                        List<HttpHeader> modifiedHeaders = new ArrayList<>(originalRequest.headers());
                         
                         for (String sensitiveHeader : extension.getSensitiveHeaders()) {
                             String finalPayload;
@@ -125,7 +125,7 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                                 finalPayload = hostValue + extension.getBxssPayload().replace("{{collaborator}}", payloadDomain);
                                 
                                 // Store correlation for collaborator tracking
-                                PayloadCorrelation correlation = new PayloadCorrelation(finalOriginalRequest.url(), sensitiveHeader, finalOriginalRequest.method());
+                                PayloadCorrelation correlation = new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method());
                                 payloadMap.put(payloadDomain, correlation);
                                 
                                 api.logging().logToOutput("Context menu: Added payload to map: " + payloadDomain + " -> " + sensitiveHeader);
@@ -151,13 +151,13 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                         }
                         
                         // Add extra headers
-                        HttpRequest finalRequest = finalOriginalRequest.withUpdatedHeaders(addOrReplaceHeaders(modifiedHeaders, extension.getExtraHeaders()));
+                        HttpRequest finalRequest = originalRequest.withUpdatedHeaders(addOrReplaceHeaders(modifiedHeaders, extension.getExtraHeaders()));
                         
                         api.logging().logToOutput("Context menu: Sending request with " + extension.getSensitiveHeaders().size() + " sensitive headers");
                         api.logging().logToOutput("Context menu: Total payloads in map: " + payloadMap.size());
                         
                         api.http().sendRequest(finalRequest);
-                        api.logging().logToOutput("Context menu scan: Sent BXSS probes for sensitive headers for URL: " + finalOriginalRequest.url());
+                        api.logging().logToOutput("Context menu scan: Sent BXSS probes for sensitive headers for URL: " + originalRequest.url());
                         return;
                     }
 
@@ -174,8 +174,8 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                     
                     headersToAdd.addAll(extension.getExtraHeaders());
                     
-                    List<HttpHeader> newHeaders = addOrReplaceHeaders(finalOriginalRequest.headers(), headersToAdd);
-                    HttpRequest modifiedRequest = finalOriginalRequest.withUpdatedHeaders(newHeaders);
+                    List<HttpHeader> newHeaders = addOrReplaceHeaders(originalRequest.headers(), headersToAdd);
+                    HttpRequest modifiedRequest = originalRequest.withUpdatedHeaders(newHeaders);
                     
                     try {
                         long startTime = System.currentTimeMillis();
@@ -184,10 +184,10 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                         long responseTime = endTime - startTime;
                         
                         if (responseTime >= extension.getSqliSleepTime() * 1000) {
-                            api.logging().logToOutput("Context menu scan: Possible Blind SQL Injection detected! Response time: " + responseTime + " ms at URL: " + finalOriginalRequest.url());
+                            api.logging().logToOutput("Context menu scan: Possible Blind SQL Injection detected! Response time: " + responseTime + " ms at URL: " + originalRequest.url());
                             auditIssueCreator.createSensitiveHeaderSqlIssue(response, responseTime);
                         } else {
-                            api.logging().logToOutput("Context menu scan: Request completed in " + responseTime + " ms for URL: " + finalOriginalRequest.url());
+                            api.logging().logToOutput("Context menu scan: Request completed in " + responseTime + " ms for URL: " + originalRequest.url());
                         }
                     } catch (Exception e) {
                         api.logging().logToError("Error in context menu scan: " + e.getMessage());
