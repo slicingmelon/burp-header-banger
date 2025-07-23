@@ -47,6 +47,9 @@ public class BurpHeaderBanger implements BurpExtension {
     private List<String> extraHeaders = new ArrayList<>();
     private boolean allowDuplicateHeaders = true; // true = allow duplicate headers, false = add only if not exists
     
+    // 403 Alerts tracking
+    private final List<Alert403Entry> alert403Entries = Collections.synchronizedList(new ArrayList<>());
+    
     // UI Components
     private HeaderBangerTab headerBangerTab;
     
@@ -479,6 +482,35 @@ public class BurpHeaderBanger implements BurpExtension {
         // Escape special regex characters in URL
         String regexPattern = url.replace(".", "\\.").replace("?", "\\?").replace("*", "\\*").replace("+", "\\+").replace("[", "\\[").replace("]", "\\]").replace("(", "\\(").replace(")", "\\)").replace("{", "\\{").replace("}", "\\}").replace("^", "\\^").replace("$", "\\$").replace("|", "\\|");
         addExclusion(regexPattern);
+    }
+    
+    // 403 Alerts management methods
+    public List<Alert403Entry> getAlert403Entries() {
+        return new ArrayList<>(alert403Entries);
+    }
+    
+    public void addAlert403Entry(Alert403Entry entry) {
+        alert403Entries.add(entry);
+        api.logging().logToOutput("[403_ALERT] Added 403 alert: " + entry.toString());
+        
+        // Notify UI to refresh the 403 alerts table
+        if (headerBangerTab != null) {
+            SwingUtilities.invokeLater(() -> {
+                headerBangerTab.refresh403AlertsTable();
+            });
+        }
+    }
+    
+    public void clearAlert403Entries() {
+        alert403Entries.clear();
+        api.logging().logToOutput("[403_ALERT] Cleared all 403 alerts");
+        
+        // Notify UI to refresh the 403 alerts table
+        if (headerBangerTab != null) {
+            SwingUtilities.invokeLater(() -> {
+                headerBangerTab.refresh403AlertsTable();
+            });
+        }
     }
 
     public void extractSqliSleepTime() {

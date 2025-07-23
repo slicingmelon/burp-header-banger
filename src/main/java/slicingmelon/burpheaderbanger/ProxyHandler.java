@@ -117,6 +117,9 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             return ProxyResponseReceivedAction.continueWith(interceptedResponse);
         }
 
+        // Check for 403 status code in extension-modified requests
+        check403Status(interceptedResponse);
+        
         // Process response for SQL injection detection
         if (extension.getAttackMode() == 1) {
             processResponseForSqli(interceptedResponse);
@@ -343,6 +346,18 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             
             api.logging().logToOutput("Sensitive headers scan - Response time: " + responseTime + " ms (manual timing)");
             
+            // Check for 403 status code in sensitive headers scan
+            if (response.response() != null && response.response().statusCode() == 403) {
+                String method = workingRequest.method();
+                String requestHost = workingRequest.httpService().host();
+                String pathQuery = workingRequest.path();
+                
+                Alert403Entry entry = new Alert403Entry(method, requestHost, pathQuery, 403, "Extensions");
+                extension.addAlert403Entry(entry);
+                
+                api.logging().logToOutput("[403_DETECTED] Sensitive headers scan returned 403: " + method + " " + requestHost + pathQuery);
+            }
+            
             // Only check timing if in SQL injection mode
             if (extension.getAttackMode() == 1 && 
                 responseTime >= extension.getSqliSleepTime() * 1000) {
@@ -361,6 +376,24 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             }
         }
         return null;
+    }
+    
+    private void check403Status(InterceptedResponse interceptedResponse) {
+        // Only check if this request was modified by our extension (we stored the original request)
+        String requestKey = interceptedResponse.request().url();
+        boolean wasModifiedByExtension = originalRequests.containsKey(requestKey);
+        
+        if (wasModifiedByExtension && interceptedResponse.statusCode() == 403) {
+            HttpRequest request = interceptedResponse.request();
+            String method = request.method();
+            String host = request.httpService().host();
+            String pathQuery = request.path(); // This includes path + query parameters
+            
+            Alert403Entry entry = new Alert403Entry(method, host, pathQuery, 403, "Proxy");
+            extension.addAlert403Entry(entry);
+            
+            api.logging().logToOutput("[403_DETECTED] Proxy request returned 403: " + method + " " + host + pathQuery);
+        }
     }
 
 } 

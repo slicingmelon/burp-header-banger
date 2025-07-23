@@ -156,7 +156,20 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                         
                         api.logging().logToOutput("Context menu: Sending request with " + extension.getSensitiveHeaders().size() + " sensitive headers");
                         
-                        api.http().sendRequest(finalRequest);
+                        var response = api.http().sendRequest(finalRequest);
+                        
+                        // Check for 403 status code in context menu BXSS scan
+                        if (response.response() != null && response.response().statusCode() == 403) {
+                            String method = finalRequest.method();
+                            String requestHost = finalRequest.httpService().host();
+                            String pathQuery = finalRequest.path();
+                            
+                            Alert403Entry entry = new Alert403Entry(method, requestHost, pathQuery, 403, "Extensions");
+                            extension.addAlert403Entry(entry);
+                            
+                            api.logging().logToOutput("[403_DETECTED] Context menu BXSS scan returned 403: " + method + " " + requestHost + pathQuery);
+                        }
+                        
                         api.logging().logToOutput("Context menu scan: Sent BXSS probes for sensitive headers for URL: " + originalRequest.url());
                         return;
                     }
@@ -182,6 +195,18 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                         HttpRequestResponse response = api.http().sendRequest(modifiedRequest);
                         long endTime = System.currentTimeMillis();
                         long responseTime = endTime - startTime;
+                        
+                        // Check for 403 status code in context menu SQL injection scan
+                        if (response.response() != null && response.response().statusCode() == 403) {
+                            String method = modifiedRequest.method();
+                            String requestHost = modifiedRequest.httpService().host();
+                            String pathQuery = modifiedRequest.path();
+                            
+                            Alert403Entry entry = new Alert403Entry(method, requestHost, pathQuery, 403, "Extensions");
+                            extension.addAlert403Entry(entry);
+                            
+                            api.logging().logToOutput("[403_DETECTED] Context menu SQL injection scan returned 403: " + method + " " + requestHost + pathQuery);
+                        }
                         
                         if (responseTime >= extension.getSqliSleepTime() * 1000) {
                             api.logging().logToOutput("Context menu scan: Possible Blind SQL Injection detected! Response time: " + responseTime + " ms at URL: " + originalRequest.url());
