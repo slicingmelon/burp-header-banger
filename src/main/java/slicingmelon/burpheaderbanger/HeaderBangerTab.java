@@ -790,6 +790,7 @@ public class HeaderBangerTab {
         refreshExtraHeadersList();
         refreshExclusionsTable();
         refreshPayloadFields();
+        updateAttackModeButtons();
     }
     
     public void refreshPayloadFields() {

@@ -225,6 +225,9 @@ public class BurpHeaderBanger implements BurpExtension {
         // Load attack mode
         if (persistedObject.getInteger("attackMode") != null) {
             attackMode = persistedObject.getInteger("attackMode");
+            api.logging().logToOutput("DEBUG loadSettings: Loaded attack mode from persistence: " + attackMode);
+        } else {
+            api.logging().logToOutput("DEBUG loadSettings: No attack mode in persistence, using default: " + attackMode);
         }
         
         // Load timing-based detection setting
@@ -323,6 +326,7 @@ public class BurpHeaderBanger implements BurpExtension {
         
         // Save attack mode
         persistedObject.setInteger("attackMode", attackMode);
+        api.logging().logToOutput("DEBUG saveSettings: Saved attack mode to persistence: " + attackMode);
         
         // Save timing-based detection setting
         persistedObject.setBoolean("timingBasedDetectionEnabled", timingBasedDetectionEnabled);
