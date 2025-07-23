@@ -15,6 +15,7 @@ import burp.api.montoya.proxy.http.ProxyResponseReceivedAction;
 import burp.api.montoya.proxy.http.ProxyResponseToBeSentAction;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 
 public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
@@ -23,19 +24,20 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
     private final AuditIssueBuilder auditIssueCreator;
     private final ScheduledExecutorService scheduler;
     private final CollaboratorClient collaboratorClient;
-    private final Map<String, PayloadCorrelation> payloadMap;
     private final Map<String, Long> requestTimestamps;
     private final String collaboratorServerLocation;
+    
+    // Store original clean requests for sensitive headers scan
+    private final Map<String, HttpRequest> originalRequests = new ConcurrentHashMap<>();
 
     public ProxyHandler(BurpHeaderBanger extension, MontoyaApi api, AuditIssueBuilder auditIssueCreator, 
                        ScheduledExecutorService scheduler, CollaboratorClient collaboratorClient, 
-                       Map<String, PayloadCorrelation> payloadMap, Map<String, Long> requestTimestamps) {
+                       Map<String, Long> requestTimestamps) {
         this.extension = extension;
         this.api = api;
         this.auditIssueCreator = auditIssueCreator;
         this.scheduler = scheduler;
         this.collaboratorClient = collaboratorClient;
-        this.payloadMap = payloadMap;
         this.requestTimestamps = requestTimestamps;
         
         // Initialize collaborator server location
@@ -44,12 +46,7 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         } else {
             this.collaboratorServerLocation = null;
         }
-        
-        // Register interaction handler for direct collaborator interaction processing
-        if (extension.getCollaboratorClient() != null) {
-            // TODO: Implement direct interaction handler here
-            // This will search proxy history when interactions occur
-        }
+
     }
 
     @Override
@@ -80,7 +77,12 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             return ProxyRequestReceivedAction.continueWith(interceptedRequest);
         }
 
-        // Modify request headers
+        // Store original clean request for later sensitive headers scan
+        String requestKey = request.url();
+        originalRequests.put(requestKey, request);
+        api.logging().logToOutput("Stored original clean request for sensitive headers scan: " + requestKey);
+
+        // Modify request headers (only regular headers for proxy traffic)
         HttpRequest modifiedRequest = modifyRequestHeaders(request);
         
         // NOTE: Timestamp is now stored in handleRequestToBeSent() to exclude intercept delays
@@ -94,7 +96,7 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         }
         
         // Store timestamp for SQL injection timing detection (excludes intercept delays)
-        if (extension.getAttackMode() == 1 && extension.isTimingBasedDetectionEnabled()) {
+        if (extension.getAttackMode() == 1) {
             String requestKey = interceptedRequest.url();
             requestTimestamps.put(requestKey, System.currentTimeMillis());
             api.logging().logToOutput("Stored timestamp for SQL injection timing: " + requestKey);
@@ -115,13 +117,23 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             return ProxyResponseReceivedAction.continueWith(interceptedResponse);
         }
 
+        // Check for 403 status code in extension-modified requests
+        check403Status(interceptedResponse);
+        
         // Process response for SQL injection detection
         if (extension.getAttackMode() == 1) {
             processResponseForSqli(interceptedResponse);
         }
         
-        // Launch separate scan for sensitive headers
-        scheduler.execute(() -> processSensitiveHeadersScan(interceptedResponse));
+        // Now trigger sensitive headers scan using stored original clean request
+        String requestKey = interceptedResponse.request().url();
+        HttpRequest originalCleanRequest = originalRequests.remove(requestKey);
+        if (originalCleanRequest != null) {
+            scheduler.execute(() -> processSensitiveHeadersScan(originalCleanRequest));
+            api.logging().logToOutput("Triggered sensitive headers scan for: " + requestKey);
+        } else {
+            api.logging().logToOutput("No stored original request found for sensitive headers scan: " + requestKey);
+        }
 
         return ProxyResponseReceivedAction.continueWith(interceptedResponse);
     }
@@ -132,167 +144,108 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
     }
 
     private HttpRequest modifyRequestHeaders(HttpRequest request) {
+        // Only apply regular headers for proxy traffic
+        HttpRequest workingRequest;
         if (extension.getAttackMode() == 2) {
-            return injectUniqueXssPayloads(request);
+            workingRequest = applyHeadersWithPayload(request, extension.getHeaders(), extension.getBxssPayload(), false);
         } else {
-            return injectSqlInjectionPayloads(request);
+            workingRequest = applyHeadersWithPayload(request, extension.getHeaders(), extension.getSqliPayload(), false);
         }
+        
+        // Add extra headers
+        return addExtraHeaders(workingRequest);
     }
 
-    private HttpRequest injectUniqueXssPayloads(HttpRequest request) {
+    /**
+     * Reusable method to apply headers with payload logic
+     * @param request Original request
+     * @param headersList List of headers to inject
+     * @param payload Payload to inject
+     * @param isForSensitiveHeaders Whether this is for sensitive headers (affects host value logic)
+     * @return Modified request with headers applied
+     */
+    private HttpRequest applyHeadersWithPayload(HttpRequest request, List<String> headersList, String payload, boolean isForSensitiveHeaders) {
         HttpRequest workingRequest = request;
+        String hostValue = null;
         
-        api.logging().logToOutput("Injecting XSS payloads for request: " + request.url());
-        api.logging().logToOutput("XSS - Headers to process: " + extension.getHeaders());
-        api.logging().logToOutput("XSS - Headers count: " + extension.getHeaders().size());
+        // Get host value if needed for sensitive headers
+        if (isForSensitiveHeaders) {
+            hostValue = getHeaderValue(request.headers(), "Host");
+        }
         
-        for (String headerName : extension.getHeaders()) {
-            api.logging().logToOutput("XSS - Processing header: " + headerName);
+        api.logging().logToOutput("Applying headers with payload for request: " + request.url());
+        api.logging().logToOutput("Headers to process: " + headersList);
+        api.logging().logToOutput("Headers count: " + headersList.size());
+        
+        for (String headerName : headersList) {
+            api.logging().logToOutput("Processing header: " + headerName);
             
             String finalPayload;
-            String payloadDomain = null;
             
-            // Check if payload uses collaborator tracking
-            if (extension.getBxssPayload().contains("{{collaborator}}")) {
-                // Generate collaborator payload and do tracking
+            // Check if payload uses collaborator tracking (only for BXSS)
+            if (extension.getAttackMode() == 2 && payload.contains("{{collaborator}}")) {
+                // Generate collaborator payload
                 CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
-                payloadDomain = collabPayload.toString();
-                String currentPayload = extension.getBxssPayload().replace("{{collaborator}}", payloadDomain);
+                String payloadDomain = collabPayload.toString();
+                String currentPayload = payload.replace("{{collaborator}}", payloadDomain);
                 
-                if ("User-Agent".equalsIgnoreCase(headerName)) {
-                    // User-Agent: Mozilla + payload
-                    finalPayload = "Mozilla" + currentPayload;
-                } else if ("Origin".equalsIgnoreCase(headerName) || "Referer".equalsIgnoreCase(headerName)) {
-                    // Origin & Referer: If exists, append payload to original value, else just payload
-                    String existingValue = request.headerValue(headerName);
-                    if (existingValue != null) {
-                        finalPayload = existingValue + currentPayload;
-                    } else {
-                        finalPayload = currentPayload;
-                    }
-                } else {
-                    // All other headers: If exists, append payload to current value, else just payload
-                    String existingValue = request.headerValue(headerName);
-                    if (existingValue != null) {
-                        finalPayload = existingValue + currentPayload;
-                    } else {
-                        finalPayload = currentPayload;
-                    }
-                }
-                
-                // Create and store correlation for collaborator tracking
-                PayloadCorrelation correlation = new PayloadCorrelation(request.url(), headerName, request.method());
-                payloadMap.put(payloadDomain, correlation);
-                
-                api.logging().logToOutput("XSS - Added payload to map: " + payloadDomain + " -> " + headerName + " for " + request.url());
+                finalPayload = buildFinalPayload(request, headerName, currentPayload, hostValue, isForSensitiveHeaders);
+                api.logging().logToOutput("Using collaborator payload for header: " + headerName + " with domain: " + payloadDomain);
             } else {
-                // Custom payload without collaborator - no tracking needed
-                String currentPayload = extension.getBxssPayload();
-                
-                if ("User-Agent".equalsIgnoreCase(headerName)) {
-                    // User-Agent: Mozilla + payload
-                    finalPayload = "Mozilla" + currentPayload;
-                } else if ("Origin".equalsIgnoreCase(headerName) || "Referer".equalsIgnoreCase(headerName)) {
-                    // Origin & Referer: If exists, append payload to original value, else just payload
-                    String existingValue = request.headerValue(headerName);
-                    if (existingValue != null) {
-                        finalPayload = existingValue + currentPayload;
-                    } else {
-                        finalPayload = currentPayload;
-                    }
-                } else {
-                    // All other headers: If exists, append payload to current value, else just payload
-                    String existingValue = request.headerValue(headerName);
-                    if (existingValue != null) {
-                        finalPayload = existingValue + currentPayload;
-                    } else {
-                        finalPayload = currentPayload;
-                    }
-                }
-                
-                api.logging().logToOutput("XSS - Using custom payload (no collaborator tracking): " + headerName);
+                // No collaborator tracking
+                finalPayload = buildFinalPayload(request, headerName, payload, hostValue, isForSensitiveHeaders);
+                api.logging().logToOutput("Using payload (no collaborator tracking): " + headerName);
             }
 
             // Remove existing header first, then add new one
             workingRequest = workingRequest.withRemovedHeader(headerName);
             workingRequest = workingRequest.withAddedHeader(headerName, finalPayload);
             
-            api.logging().logToOutput("XSS - Added header: " + headerName + " = " + finalPayload);
-        }
-        
-        // Add extra headers using the proper API method
-        for (String extraHeader : extension.getExtraHeaders()) {
-            String[] parts = extraHeader.split(":", 2);
-            if (parts.length == 2) {
-                String headerName = parts[0].trim();
-                String headerValue = parts[1].trim();
-                
-                if (!extension.isAllowDuplicateHeaders()) {
-                    if (workingRequest.hasHeader(headerName)) {
-                        continue; // Skip if header already exists and duplicates not allowed
-                    }
-                }
-                
-                workingRequest = workingRequest.withAddedHeader(headerName, headerValue);
-                api.logging().logToOutput("XSS - Added extra header: " + headerName + " = " + headerValue);
-            }
-        }
-        
-        // Debug: Show final request headers after all processing
-        api.logging().logToOutput("XSS - Final request headers (" + workingRequest.headers().size() + " total):");
-        for (HttpHeader header : workingRequest.headers()) {
-            api.logging().logToOutput("  " + header.name() + ": " + header.value());
+            api.logging().logToOutput("Added header: " + headerName + " = " + finalPayload);
         }
         
         return workingRequest;
     }
-    
-    private HttpRequest injectSqlInjectionPayloads(HttpRequest request) {
+
+    /**
+     * Build the final payload for a header based on the header type and context
+     */
+    private String buildFinalPayload(HttpRequest request, String headerName, String payload, String hostValue, boolean isForSensitiveHeaders) {
+        String existingValue = request.headerValue(headerName);
+        
+        if ("User-Agent".equalsIgnoreCase(headerName)) {
+            // User-Agent: Mozilla + payload
+            return "Mozilla" + payload;
+        } else if ("Origin".equalsIgnoreCase(headerName) || "Referer".equalsIgnoreCase(headerName)) {
+            // Origin & Referer: If exists, append payload to original value, else use appropriate default
+            if (existingValue != null) {
+                return existingValue + payload;
+            } else if (isForSensitiveHeaders && hostValue != null) {
+                // For sensitive headers, use host value as base
+                return hostValue + payload;
+            } else {
+                return payload;
+            }
+        } else {
+            // All other headers: If exists, append payload to current value, else use appropriate default
+            if (existingValue != null) {
+                return existingValue + payload;
+            } else if (isForSensitiveHeaders && hostValue != null && 
+                      (headerName.toLowerCase().contains("host") || headerName.toLowerCase().contains("server"))) {
+                // For sensitive headers that are host-related, use host value as base
+                return hostValue + payload;
+            } else {
+                return payload;
+            }
+        }
+    }
+
+    /**
+     * Add extra headers to the request
+     */
+    private HttpRequest addExtraHeaders(HttpRequest request) {
         HttpRequest workingRequest = request;
         
-        api.logging().logToOutput("Injecting SQL injection payloads for request: " + request.url());
-        api.logging().logToOutput("Headers to process: " + extension.getHeaders());
-        api.logging().logToOutput("Headers count: " + extension.getHeaders().size());
-        
-        // Process ALL headers from the Headers list (both existing and non-existing)
-        for (String headerName : extension.getHeaders()) {
-            api.logging().logToOutput("Processing header: " + headerName);
-            
-            // SQL injection payloads never use collaborator tracking
-            String currentPayload = extension.getSqliPayload();
-            String finalPayload;
-            
-            if ("User-Agent".equalsIgnoreCase(headerName)) {
-                // User-Agent: Mozilla + payload
-                finalPayload = "Mozilla" + currentPayload;
-            } else if ("Origin".equalsIgnoreCase(headerName) || "Referer".equalsIgnoreCase(headerName)) {
-                // Origin & Referer: If exists, append payload to original value, else just payload
-                String existingValue = request.headerValue(headerName);
-                if (existingValue != null) {
-                    finalPayload = existingValue + currentPayload;
-                } else {
-                    finalPayload = currentPayload;
-                }
-            } else {
-                // All other headers: If exists, append payload to current value, else just payload
-                String existingValue = request.headerValue(headerName);
-                if (existingValue != null) {
-                    finalPayload = existingValue + currentPayload;
-                } else {
-                    finalPayload = currentPayload;
-                }
-            }
-            
-            api.logging().logToOutput("SQLi - Using payload (no collaborator tracking): " + headerName);
-            
-            // Remove existing header first, then add new one
-            workingRequest = workingRequest.withRemovedHeader(headerName);
-            workingRequest = workingRequest.withAddedHeader(headerName, finalPayload);
-            
-            api.logging().logToOutput("SQLi - Added header: " + headerName + " = " + finalPayload);
-        }
-        
-        // Add extra headers using the proper API method
         for (String extraHeader : extension.getExtraHeaders()) {
             String[] parts = extraHeader.split(":", 2);
             if (parts.length == 2) {
@@ -306,6 +259,7 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
                 }
                 
                 workingRequest = workingRequest.withAddedHeader(headerName, headerValue);
+                api.logging().logToOutput("Added extra header: " + headerName + " = " + headerValue);
             }
         }
         
@@ -313,12 +267,6 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
     }
 
     private void processResponseForSqli(InterceptedResponse interceptedResponse) {
-        // Check if timing-based detection is disabled
-        if (!extension.isTimingBasedDetectionEnabled()) {
-            api.logging().logToOutput("Timing-based SQL injection detection is disabled");
-            return;
-        }
-        
         // Check content type
         String contentType = getHeaderValue(interceptedResponse.headers(), "Content-Type");
         if (contentType != null) {
@@ -349,9 +297,7 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         }
     }
 
-    private void processSensitiveHeadersScan(InterceptedResponse interceptedResponse) {
-        HttpRequest originalRequest = interceptedResponse.initiatingRequest();
-        
+    private void processSensitiveHeadersScan(HttpRequest originalRequest) {
         String host = originalRequest.httpService().host();
         String url = originalRequest.url();
         
@@ -370,156 +316,51 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             return;
         }
 
-        if (extension.getAttackMode() == 2) {
-            // BXSS logic for sensitive headers
-            HttpRequest workingRequest = originalRequest;
-            
-            for (String sensitiveHeader : extension.getSensitiveHeaders()) {
-                String finalPayload;
-                String payloadDomain = null;
-                
-                // Check if payload uses collaborator tracking
-                if (extension.getBxssPayload().contains("{{collaborator}}")) {
-                    // Generate collaborator payload and do tracking
-                    CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
-                    payloadDomain = collabPayload.toString();
-                    String currentPayload = extension.getBxssPayload().replace("{{collaborator}}", payloadDomain);
-                    
-                    if ("Origin".equalsIgnoreCase(sensitiveHeader)) {
-                        // Origin: If exists, append payload to its value, else Host header value + payload
-                        String existingValue = originalRequest.headerValue(sensitiveHeader);
-                        if (existingValue != null) {
-                            finalPayload = existingValue + currentPayload;
-                        } else {
-                            finalPayload = hostValue + currentPayload;
-                        }
-                    } else {
-                        // All other sensitive headers: If exists, append payload to existing value, else Host header value + payload
-                        String existingValue = originalRequest.headerValue(sensitiveHeader);
-                        if (existingValue != null) {
-                            finalPayload = existingValue + currentPayload;
-                        } else {
-                            finalPayload = hostValue + currentPayload;
-                        }
-                    }
-                    
-                    // Store correlation for collaborator tracking
-                    PayloadCorrelation correlation = new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method());
-                    payloadMap.put(payloadDomain, correlation);
-                    
-                    api.logging().logToOutput("XSS - Added sensitive header payload to map: " + payloadDomain + " -> " + sensitiveHeader);
-                } else {
-                    // Custom payload without collaborator - no tracking needed
-                    String currentPayload = extension.getBxssPayload();
-                    
-                    if ("Origin".equalsIgnoreCase(sensitiveHeader)) {
-                        // Origin: If exists, append payload to its value, else Host header value + payload
-                        String existingValue = originalRequest.headerValue(sensitiveHeader);
-                        if (existingValue != null) {
-                            finalPayload = existingValue + currentPayload;
-                        } else {
-                            finalPayload = hostValue + currentPayload;
-                        }
-                    } else {
-                        // All other sensitive headers: If exists, append payload to existing value, else Host header value + payload
-                        String existingValue = originalRequest.headerValue(sensitiveHeader);
-                        if (existingValue != null) {
-                            finalPayload = existingValue + currentPayload;
-                        } else {
-                            finalPayload = hostValue + currentPayload;
-                        }
-                    }
-                    
-                    api.logging().logToOutput("XSS - Using custom payload for sensitive header (no collaborator tracking): " + sensitiveHeader);
-                }
-                
-                // Remove existing header first, then add new one
-                workingRequest = workingRequest.withRemovedHeader(sensitiveHeader);
-                workingRequest = workingRequest.withAddedHeader(sensitiveHeader, finalPayload);
-                
-                api.logging().logToOutput("XSS - Added sensitive header: " + sensitiveHeader + " = " + finalPayload);
-            }
-            
-            // Add extra headers
-            for (String extraHeader : extension.getExtraHeaders()) {
-                String[] parts = extraHeader.split(":", 2);
-                if (parts.length == 2) {
-                    String headerName = parts[0].trim();
-                    String headerValue = parts[1].trim();
-                    
-                    if (!extension.isAllowDuplicateHeaders()) {
-                        if (workingRequest.hasHeader(headerName)) {
-                            continue; // Skip if header already exists and duplicates not allowed
-                        }
-                    }
-                    
-                    workingRequest = workingRequest.withAddedHeader(headerName, headerValue);
-                }
-            }
-            
-            api.http().sendRequest(workingRequest);
-            return;
-        }
-        
-        // SQL injection logic for sensitive headers
+        // Start with original request and apply both regular headers + sensitive headers cleanly
         HttpRequest workingRequest = originalRequest;
         
-        for (String sensitiveHeader : extension.getSensitiveHeaders()) {
-            // SQL injection payloads might use collaborator for out-of-band attacks (LOAD_FILE, xp_cmdshell, etc.)
-            String currentPayload = extension.getSqliPayload();
-            
-            String finalPayload;
-            if ("Origin".equalsIgnoreCase(sensitiveHeader)) {
-                // Origin: If exists, append payload to its value, else Host header value + payload
-                String existingValue = originalRequest.headerValue(sensitiveHeader);
-                if (existingValue != null) {
-                    finalPayload = existingValue + currentPayload;
-                } else {
-                    finalPayload = hostValue + currentPayload;
-                }
-            } else {
-                // All other sensitive headers: If exists, append payload to existing value, else Host header value + payload
-                String existingValue = originalRequest.headerValue(sensitiveHeader);
-                if (existingValue != null) {
-                    finalPayload = existingValue + currentPayload;
-                } else {
-                    finalPayload = hostValue + currentPayload;
-                }
-            }
-            
-            // Remove existing header first, then add new one
-            workingRequest = workingRequest.withRemovedHeader(sensitiveHeader);
-            workingRequest = workingRequest.withAddedHeader(sensitiveHeader, finalPayload);
-            
-            api.logging().logToOutput("SQLi - Added sensitive header: " + sensitiveHeader + " = " + finalPayload);
+        // Apply regular headers first
+        if (extension.getAttackMode() == 2) {
+            workingRequest = applyHeadersWithPayload(workingRequest, extension.getHeaders(), extension.getBxssPayload(), false);
+        } else {
+            workingRequest = applyHeadersWithPayload(workingRequest, extension.getHeaders(), extension.getSqliPayload(), false);
+        }
+        
+        // Apply sensitive headers
+        if (extension.getAttackMode() == 2) {
+            workingRequest = applyHeadersWithPayload(workingRequest, extension.getSensitiveHeaders(), extension.getBxssPayload(), true);
+        } else {
+            workingRequest = applyHeadersWithPayload(workingRequest, extension.getSensitiveHeaders(), extension.getSqliPayload(), true);
         }
         
         // Add extra headers
-        for (String extraHeader : extension.getExtraHeaders()) {
-            String[] parts = extraHeader.split(":", 2);
-            if (parts.length == 2) {
-                String headerName = parts[0].trim();
-                String headerValue = parts[1].trim();
-                
-                if (!extension.isAllowDuplicateHeaders()) {
-                    if (workingRequest.hasHeader(headerName)) {
-                        continue; // Skip if header already exists and duplicates not allowed
-                    }
-                }
-                
-                workingRequest = workingRequest.withAddedHeader(headerName, headerValue);
-            }
-        }
+        workingRequest = addExtraHeaders(workingRequest);
         
+        api.logging().logToOutput("Sensitive headers scan: Applied " + extension.getHeaders().size() + " regular headers + " + 
+                                extension.getSensitiveHeaders().size() + " sensitive headers");
+
         try {
             long startTime = System.currentTimeMillis();
             var response = api.http().sendRequest(workingRequest);
             long responseTime = System.currentTimeMillis() - startTime;
             
-            api.logging().logToOutput("SQLi sensitive headers - Response time: " + responseTime + " ms (manual timing)");
+            api.logging().logToOutput("Sensitive headers scan - Response time: " + responseTime + " ms (manual timing)");
             
-            // Only check timing if timing-based detection is enabled
-            if (extension.isTimingBasedDetectionEnabled() && responseTime >= extension.getSqliSleepTime() * 1000) {
+            // Check for 403 status code in sensitive headers scan
+            if (response.response() != null && response.response().statusCode() == 403) {
+                String method = workingRequest.method();
+                String requestHost = workingRequest.httpService().host();
+                String pathQuery = workingRequest.path();
+                
+                Alert403Entry entry = new Alert403Entry(method, requestHost, pathQuery, 403, "Extensions", response);
+                extension.addAlert403Entry(entry);
+                
+                api.logging().logToOutput("[403_DETECTED] Sensitive headers scan returned 403: " + method + " " + requestHost + pathQuery);
+            }
+            
+            // Only check timing if in SQL injection mode
+            if (extension.getAttackMode() == 1 && 
+                responseTime >= extension.getSqliSleepTime() * 1000) {
                 api.logging().logToOutput("TIMING-BASED SQL INJECTION DETECTED in sensitive headers (Server response time: " + responseTime + " ms)");
                 auditIssueCreator.createSensitiveHeaderSqlIssue(response, responseTime);
             }
@@ -536,6 +377,29 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         }
         return null;
     }
-
+    
+    private void check403Status(InterceptedResponse interceptedResponse) {
+        // Only check if this request was modified by our extension (we stored the original request)
+        String requestKey = interceptedResponse.request().url();
+        boolean wasModifiedByExtension = originalRequests.containsKey(requestKey);
+        
+        if (wasModifiedByExtension && interceptedResponse.statusCode() == 403) {
+            HttpRequest request = interceptedResponse.request();
+            String method = request.method();
+            String host = request.httpService().host();
+            String pathQuery = request.path(); // This includes path + query parameters
+            
+            // Create HttpRequestResponse object for the alert
+            var requestResponse = burp.api.montoya.http.message.HttpRequestResponse.httpRequestResponse(
+                interceptedResponse.initiatingRequest(), 
+                interceptedResponse
+            );
+            
+            Alert403Entry entry = new Alert403Entry(method, host, pathQuery, 403, "Proxy", requestResponse);
+            extension.addAlert403Entry(entry);
+            
+            api.logging().logToOutput("[403_DETECTED] Proxy request returned 403: " + method + " " + host + pathQuery);
+        }
+    }
 
 } 

@@ -8,6 +8,12 @@ import java.awt.*;
 import java.awt.event.ItemEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.HashSet;
+import java.util.Set;
+import burp.api.montoya.ui.editor.HttpRequestEditor;
+import burp.api.montoya.ui.editor.HttpResponseEditor;
+
+import static burp.api.montoya.ui.editor.EditorOptions.READ_ONLY;
 
 
 public class HeaderBangerTab {
@@ -17,7 +23,6 @@ public class HeaderBangerTab {
     private JTabbedPane tabbedPane;
     private JCheckBox activeCheckBox;
     private JCheckBox onlyInScopeCheckBox;
-    private JCheckBox timingBasedDetectionCheckBox;
 
     private JButton sqliButton;
     private JButton xssButton;
@@ -29,6 +34,10 @@ public class HeaderBangerTab {
     private JList<String> extraHeadersList;
     private JTable exclusionsTable;
     private DefaultTableModel exclusionsTableModel;
+    private JTable alert403Table;
+    private DefaultTableModel alert403TableModel;
+    private HttpRequestEditor alert403RequestViewer;
+    private HttpResponseEditor alert403ResponseViewer;
     private JTextField newHeaderField;
     private JTextField newSensitiveHeaderField;
     private JTextField newExtraHeaderField;
@@ -78,14 +87,6 @@ public class HeaderBangerTab {
             api.logging().logToOutput("Only in scope items is now " + (extension.isOnlyInScopeItems() ? "enabled" : "disabled"));
         });
         activePanel.add(onlyInScopeCheckBox);
-        
-        timingBasedDetectionCheckBox = new JCheckBox("Timing-based detection (excludes intercept delays)", extension.isTimingBasedDetectionEnabled());
-        timingBasedDetectionCheckBox.addItemListener(e -> {
-            extension.setTimingBasedDetectionEnabled(e.getStateChange() == ItemEvent.SELECTED);
-            extension.saveSettings();
-            api.logging().logToOutput("Timing-based detection is now " + (extension.isTimingBasedDetectionEnabled() ? "enabled" : "disabled"));
-        });
-        activePanel.add(timingBasedDetectionCheckBox);
         
         // Attack mode panel
         JPanel attackModePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
@@ -444,8 +445,28 @@ public class HeaderBangerTab {
 
     private JPanel createExclusionsPanel() {
         JPanel panel = new JPanel(new BorderLayout());
+        
+        // Create split pane to divide exclusions and 403 alerts
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
+        splitPane.setResizeWeight(0.6); // Give more space to exclusions panel
+        
+        // Left panel - Exclusions
+        JPanel exclusionsPanel = createExclusionsTablePanel();
+        splitPane.setLeftComponent(exclusionsPanel);
+        
+        // Right panel - 403 Alerts
+        JPanel alert403Panel = create403AlertsPanel();
+        splitPane.setRightComponent(alert403Panel);
+        
+        panel.add(splitPane, BorderLayout.CENTER);
+        
+        return panel;
+    }
+    
+    private JPanel createExclusionsTablePanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(BorderFactory.createTitledBorder("Exclusions"));
 
-        // Create table model
         exclusionsTableModel = new DefaultTableModel(new String[]{"Enabled", "Regex Pattern"}, 0) {
             @Override
             public Class<?> getColumnClass(int columnIndex) {
@@ -481,13 +502,12 @@ public class HeaderBangerTab {
             }
         });
 
-        // Add change listener to update exclusions when table changes
         exclusionsTableModel.addTableModelListener(_ -> {
             updateExclusionsFromTable();
         });
 
         JScrollPane scrollPane = new JScrollPane(exclusionsTable);
-        scrollPane.setPreferredSize(new Dimension(600, 300));
+        scrollPane.setPreferredSize(new Dimension(400, 300));
         panel.add(scrollPane, BorderLayout.CENTER);
 
         // Controls panel
@@ -511,6 +531,113 @@ public class HeaderBangerTab {
 
         panel.add(controlsPanel, BorderLayout.SOUTH);
 
+        return panel;
+    }
+    
+    private JPanel create403AlertsPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(BorderFactory.createTitledBorder("403 Alerts"));
+        
+        // Note label at the top
+        JLabel noteLabel = new JLabel("Note: This window shows the requests that returned 403 possibly due to your payloads, either exclude these hosts or come up with better obfuscated payloads");
+        noteLabel.setForeground(Color.GRAY);
+        noteLabel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
+        panel.add(noteLabel, BorderLayout.NORTH);
+        
+        // Main split pane - table on top, request/response viewers on bottom
+        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
+        splitPane.setResizeWeight(0.5); // Give equal space initially
+        
+        // Top part - table with controls
+        JPanel tablePanel = createAlert403TablePanel();
+        splitPane.setTopComponent(tablePanel);
+        
+        // Bottom part - request/response viewers
+        JPanel viewersPanel = createAlert403ViewersPanel();
+        splitPane.setBottomComponent(viewersPanel);
+        
+        panel.add(splitPane, BorderLayout.CENTER);
+
+        return panel;
+    }
+    
+    private JPanel createAlert403TablePanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        
+        // Create 403 alerts table
+        alert403TableModel = new DefaultTableModel(new String[]{"Method", "Host", "Path", "Status Code", "Source"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false; // Read-only table
+            }
+        };
+
+        alert403Table = new JTable(alert403TableModel) {
+            @Override
+            public void changeSelection(int rowIndex, int columnIndex, boolean toggle, boolean extend) {
+                // Only show request/response for single selection to avoid confusion
+                if (!toggle && !extend && rowIndex >= 0 && rowIndex < extension.getAlert403Entries().size()) {
+                    Alert403Entry entry = extension.getAlert403Entries().get(rowIndex);
+                    if (entry.getRequestResponse() != null) {
+                        alert403RequestViewer.setRequest(entry.getRequestResponse().request());
+                        if (entry.getRequestResponse().response() != null) {
+                            alert403ResponseViewer.setResponse(entry.getRequestResponse().response());
+                        }
+                    }
+                }
+                super.changeSelection(rowIndex, columnIndex, toggle, extend);
+            }
+        };
+        
+        alert403Table.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+        alert403Table.setRowHeight(25);
+        
+        // Add context menu for exclusions
+        alert403Table.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                if (e.isPopupTrigger()) {
+                    showAlert403ContextMenu(e);
+                }
+            }
+            
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                if (e.isPopupTrigger()) {
+                    showAlert403ContextMenu(e);
+                }
+            }
+        });
+
+        JScrollPane alert403ScrollPane = new JScrollPane(alert403Table);
+        alert403ScrollPane.setPreferredSize(new Dimension(500, 150));
+        panel.add(alert403ScrollPane, BorderLayout.CENTER);
+
+        // Controls panel for 403 alerts
+        JPanel alert403ControlsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+
+        JButton clearAlert403Button = new JButton("Clear All");
+        clearAlert403Button.addActionListener(_ -> extension.clearAlert403Entries());
+        alert403ControlsPanel.add(clearAlert403Button);
+
+        panel.add(alert403ControlsPanel, BorderLayout.SOUTH);
+        
+        return panel;
+    }
+    
+    private JPanel createAlert403ViewersPanel() {
+        // Create HTTP request and response editors
+        alert403RequestViewer = api.userInterface().createHttpRequestEditor(READ_ONLY);
+        alert403ResponseViewer = api.userInterface().createHttpResponseEditor(READ_ONLY);
+        
+        // Create tabbed pane for request/response viewers
+        JTabbedPane tabs = new JTabbedPane();
+        tabs.addTab("Request", alert403RequestViewer.uiComponent());
+        tabs.addTab("Response", alert403ResponseViewer.uiComponent());
+        
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.add(tabs, BorderLayout.CENTER);
+        
         return panel;
     }
 
@@ -670,8 +797,6 @@ public class HeaderBangerTab {
         JOptionPane.showMessageDialog(null, "Blind XSS payload reset to default!", "Success", JOptionPane.INFORMATION_MESSAGE);
     }
 
-
-    
     // Exclusion management methods
     private void updateExclusionsFromTable() {
         extension.getExclusions().clear();
@@ -679,7 +804,6 @@ public class HeaderBangerTab {
             boolean enabled = (Boolean) exclusionsTableModel.getValueAt(i, 0);
             String pattern = (String) exclusionsTableModel.getValueAt(i, 1);
             if (pattern != null && !pattern.trim().isEmpty()) {
-                // All patterns are treated as regex now
                 extension.getExclusions().add(new Exclusion(enabled, pattern.trim()));
             }
         }
@@ -688,14 +812,12 @@ public class HeaderBangerTab {
     
     private void addExclusion() {
         exclusionsTableModel.addRow(new Object[]{true, ""});
-        // Don't call refreshExclusionsTable() here - it will cause infinite loop with the table listener
     }
     
     private void deleteExclusion() {
         int selectedRow = exclusionsTable.getSelectedRow();
         if (selectedRow >= 0) {
             exclusionsTableModel.removeRow(selectedRow);
-            // Don't call refreshExclusionsTable() here - the table listener will handle it
         }
     }
     
@@ -713,7 +835,6 @@ public class HeaderBangerTab {
     }
 
     public void refreshExclusionsTable() {
-        // Temporarily remove the table model listener to prevent infinite loops
         javax.swing.event.TableModelListener[] listeners = exclusionsTableModel.getTableModelListeners();
         for (javax.swing.event.TableModelListener listener : listeners) {
             exclusionsTableModel.removeTableModelListener(listener);
@@ -730,7 +851,6 @@ public class HeaderBangerTab {
             api.logging().logToOutput("[HeaderBangerTab] Added row to table: " + exclusion.getPattern());
         }
         
-        // Re-add the table model listeners
         for (javax.swing.event.TableModelListener listener : listeners) {
             exclusionsTableModel.addTableModelListener(listener);
         }
@@ -753,7 +873,6 @@ public class HeaderBangerTab {
         
         if (exclusionsTableModel != null && exclusionsTable != null) {
             SwingUtilities.invokeLater(() -> {
-                // Check if this exclusion already exists in the table
                 boolean exists = false;
                 for (int i = 0; i < exclusionsTableModel.getRowCount(); i++) {
                     String existingPattern = (String) exclusionsTableModel.getValueAt(i, 1);
@@ -769,7 +888,6 @@ public class HeaderBangerTab {
                         exclusion.getPattern()
                     });
                     
-                    // Force table update
                     exclusionsTable.revalidate();
                     exclusionsTable.repaint();
                     exclusionsTableModel.fireTableDataChanged();
@@ -789,7 +907,116 @@ public class HeaderBangerTab {
         refreshSensitiveHeadersList();
         refreshExtraHeadersList();
         refreshExclusionsTable();
+        refresh403AlertsTable();
         refreshPayloadFields();
+        updateAttackModeButtons();
+    }
+    
+    public void refresh403AlertsTable() {
+        if (alert403TableModel != null) {
+            alert403TableModel.setRowCount(0);
+            for (Alert403Entry entry : extension.getAlert403Entries()) {
+                alert403TableModel.addRow(new Object[]{
+                    entry.getMethod(),
+                    entry.getHost(),
+                    entry.getPathQuery(),
+                    entry.getStatusCode(),
+                    entry.getSource()
+                });
+            }
+            
+            if (alert403Table != null) {
+                alert403Table.revalidate();
+                alert403Table.repaint();
+            }
+        }
+    }
+    
+    private void showAlert403ContextMenu(MouseEvent e) {
+        int clickedRow = alert403Table.rowAtPoint(e.getPoint());
+        if (clickedRow >= 0) {
+            // If clicked row is not selected, select only that row
+            if (!alert403Table.isRowSelected(clickedRow)) {
+                alert403Table.setRowSelectionInterval(clickedRow, clickedRow);
+            }
+            
+            int[] selectedRows = alert403Table.getSelectedRows();
+            if (selectedRows.length > 0) {
+                JPopupMenu contextMenu = new JPopupMenu();
+                
+                // Get unique hosts and URLs from all selected rows
+                Set<String> uniqueHosts = new HashSet<>();
+                Set<String> uniqueUrls = new HashSet<>();
+                
+                for (int row : selectedRows) {
+                    String host = (String) alert403TableModel.getValueAt(row, 1);
+                    String pathQuery = (String) alert403TableModel.getValueAt(row, 2);
+                    String url = "https://" + host + pathQuery;
+                    
+                    uniqueHosts.add(host);
+                    uniqueUrls.add(url);
+                }
+                
+                // Exclude hosts menu item
+                String hostText = selectedRows.length == 1 ? 
+                    "Exclude Host from Header Banger scans" : 
+                    "Exclude " + uniqueHosts.size() + " Host(s) from Header Banger scans";
+                    
+                JMenuItem excludeHostItem = new JMenuItem(hostText);
+                excludeHostItem.addActionListener(_ -> {
+                    int excludedCount = 0;
+                    StringBuilder excludedHosts = new StringBuilder();
+                    
+                    for (String host : uniqueHosts) {
+                        if (!extension.isExcluded("", host)) { // Check if not already excluded
+                            extension.addHostExclusion(host);
+                            excludedCount++;
+                            if (excludedHosts.length() > 0) excludedHosts.append(", ");
+                            excludedHosts.append(host);
+                        }
+                    }
+                    
+                    if (excludedCount > 0) {
+                        String message = excludedCount == 1 ? 
+                            "Host " + excludedHosts.toString() + " has been excluded from Header Banger scans." :
+                            excludedCount + " host(s) have been excluded from Header Banger scans: " + excludedHosts.toString();
+                        JOptionPane.showMessageDialog(null, message, "Exclusions Added", JOptionPane.INFORMATION_MESSAGE);
+                    } else {
+                        JOptionPane.showMessageDialog(null, "All selected hosts are already excluded.", "No Changes", JOptionPane.INFORMATION_MESSAGE);
+                    }
+                });
+                contextMenu.add(excludeHostItem);
+                
+                // Exclude URLs menu item  
+                String urlText = selectedRows.length == 1 ? 
+                    "Exclude URL from Header Banger scans" : 
+                    "Exclude " + uniqueUrls.size() + " URL(s) from Header Banger scans";
+                    
+                JMenuItem excludeUrlItem = new JMenuItem(urlText);
+                excludeUrlItem.addActionListener(_ -> {
+                    int excludedCount = 0;
+                    
+                    for (String url : uniqueUrls) {
+                        if (!extension.isExcluded(url, "")) { // Check if not already excluded
+                            extension.addUrlExclusion(url);
+                            excludedCount++;
+                        }
+                    }
+                    
+                    if (excludedCount > 0) {
+                        String message = excludedCount == 1 ? 
+                            "URL has been excluded from Header Banger scans." :
+                            excludedCount + " URL(s) have been excluded from Header Banger scans.";
+                        JOptionPane.showMessageDialog(null, message, "Exclusions Added", JOptionPane.INFORMATION_MESSAGE);
+                    } else {
+                        JOptionPane.showMessageDialog(null, "All selected URLs are already excluded.", "No Changes", JOptionPane.INFORMATION_MESSAGE);
+                    }
+                });
+                contextMenu.add(excludeUrlItem);
+                
+                contextMenu.show(alert403Table, e.getX(), e.getY());
+            }
+        }
     }
     
     public void refreshPayloadFields() {

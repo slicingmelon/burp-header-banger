@@ -16,8 +16,7 @@ import javax.swing.SwingUtilities;
 
 public class BurpHeaderBanger implements BurpExtension {
 
-    private static final String VERSION = "0.0.1";
-    public static final int MAX_DICTIONARY_SIZE = 20000; // Increased for better XSS detection
+    private static final String VERSION = "0.0.2";
     private static final int DEFAULT_SQLI_SLEEP_TIME = 17;
     
     public static final Set<String> SKIP_CONTENT_TYPES = Set.of(
@@ -30,7 +29,6 @@ public class BurpHeaderBanger implements BurpExtension {
     private PersistedObject persistedObject;
     private CollaboratorClient collaboratorClient;
     private ScheduledExecutorService scheduler;
-    private String collaboratorServerLocation;
 
     
     // Settings
@@ -38,7 +36,6 @@ public class BurpHeaderBanger implements BurpExtension {
     private boolean onlyInScopeItems = false;
     private int attackMode = 2; // 1 = Blind SQLi, 2 = Blind XSS
     private int sqliSleepTime = DEFAULT_SQLI_SLEEP_TIME;
-    private boolean timingBasedDetectionEnabled = true; // Timing measurement excludes intercept delays for accuracy
     
     // Headers and payloads
     private List<String> headers = new ArrayList<>();
@@ -50,14 +47,14 @@ public class BurpHeaderBanger implements BurpExtension {
     private List<String> extraHeaders = new ArrayList<>();
     private boolean allowDuplicateHeaders = true; // true = allow duplicate headers, false = add only if not exists
     
+    // 403 Alerts tracking
+    private final List<Alert403Entry> alert403Entries = Collections.synchronizedList(new ArrayList<>());
+    
     // UI Components
     private HeaderBangerTab headerBangerTab;
     
     // Request timing tracking
     private final Map<String, Long> requestTimestamps = new ConcurrentHashMap<>();
-    
-    // Payload tracking for XSS detection
-    private final Map<String, PayloadCorrelation> payloadMap = new ConcurrentHashMap<>();
     
     // Default headers
     private static final List<String> DEFAULT_HEADERS = Arrays.asList(
@@ -75,7 +72,7 @@ public class BurpHeaderBanger implements BurpExtension {
     
     private static final List<String> DEFAULT_SENSITIVE_HEADERS = Arrays.asList(
             "X-Host", "X-Forwarded-Host", "X-Forwarded-Server",
-            "X-HTTP-Host-Override", "Origin"
+            "X-HTTP-Host-Override"
     );
     
     // Default exclusions (regex patterns)
@@ -102,8 +99,8 @@ public class BurpHeaderBanger implements BurpExtension {
         
         // Create helper classes
         AuditIssueBuilder auditIssueCreator = new AuditIssueBuilder(this, api);
-        ProxyHandler proxyHandler = new ProxyHandler(this, api, auditIssueCreator, scheduler, collaboratorClient, payloadMap, requestTimestamps);
-        ScanCheck scanCheck = new ScanCheck(this, api, scheduler, collaboratorClient, payloadMap, auditIssueCreator);
+        ProxyHandler proxyHandler = new ProxyHandler(this, api, auditIssueCreator, scheduler, collaboratorClient, requestTimestamps);
+        ScanCheck scanCheck = new ScanCheck(this, api, scheduler, collaboratorClient, auditIssueCreator);
         
         // Create and register UI *before* loading settings that might affect it
         headerBangerTab = new HeaderBangerTab(this, api);
@@ -150,26 +147,27 @@ public class BurpHeaderBanger implements BurpExtension {
                         );
                         
                         if (!proxyHistory.isEmpty()) {
-                            // Find the payload correlation data by searching for key containing interaction ID
-                            PayloadCorrelation correlation = null;
-                            String correlationKey = null;
+                            // Extract context directly from the proxy history entry
+                            var requestResponse = proxyHistory.get(0); // Take the first match
+                            var request = requestResponse.finalRequest();
                             
-                            for (String key : payloadMap.keySet()) {
-                                if (key.contains(interactionId)) {
-                                    correlation = payloadMap.get(key);
-                                    correlationKey = key;
+                            // Find which header contains the interaction ID
+                            String headerName = null;
+                            for (var header : request.headers()) {
+                                if (header.value().contains(interactionId)) {
+                                    headerName = header.name();
                                     break;
                                 }
                             }
                             
-                            if (correlation != null) {
-                                api.logging().logToOutput("Found XSS interaction: " + interactionId + " for " + correlation.headerName);
-                                auditIssueCreator.createXssIssue(interaction, correlation);
+                            if (headerName != null) {
+                                api.logging().logToOutput("Found XSS interaction: " + interactionId + " for header " + headerName + " at " + request.url());
                                 
-                                // Remove from payload map to avoid duplicate issues
-                                payloadMap.remove(correlationKey);
+                                // Create a PayloadCorrelation object with the extracted data
+                                PayloadCorrelation correlation = new PayloadCorrelation(request.url(), headerName, request.method());
+                                auditIssueCreator.createXssIssue(interaction, correlation);
                             } else {
-                                api.logging().logToOutput("Interaction found but no correlation data: " + interactionId);
+                                api.logging().logToOutput("Interaction found but couldn't determine which header contained it: " + interactionId);
                             }
                         } else {
                             api.logging().logToOutput("Interaction found but no matching request in proxy history: " + interactionId);
@@ -207,13 +205,11 @@ public class BurpHeaderBanger implements BurpExtension {
                 persistedObject.setString("collaboratorSecretKey", this.collaboratorClient.getSecretKey().toString());
             }
             
-            this.collaboratorServerLocation = this.collaboratorClient.generatePayload().toString();
             api.logging().logToOutput("Collaborator client initialized successfully");
         } catch (Exception e) {
             api.logging().logToError("Failed to initialize collaborator client: " + e.getMessage());
             // Fallback to creating a new client
             this.collaboratorClient = api.collaborator().createClient();
-            this.collaboratorServerLocation = this.collaboratorClient.generatePayload().toString();
         }
     }
 
@@ -231,11 +227,9 @@ public class BurpHeaderBanger implements BurpExtension {
         // Load attack mode
         if (persistedObject.getInteger("attackMode") != null) {
             attackMode = persistedObject.getInteger("attackMode");
-        }
-        
-        // Load timing-based detection setting
-        if (persistedObject.getBoolean("timingBasedDetectionEnabled") != null) {
-            timingBasedDetectionEnabled = persistedObject.getBoolean("timingBasedDetectionEnabled");
+            api.logging().logToOutput("DEBUG loadSettings: Loaded attack mode from persistence: " + attackMode);
+        } else {
+            api.logging().logToOutput("DEBUG loadSettings: No attack mode in persistence, using default: " + attackMode);
         }
         
         // Load headers
@@ -329,9 +323,7 @@ public class BurpHeaderBanger implements BurpExtension {
         
         // Save attack mode
         persistedObject.setInteger("attackMode", attackMode);
-        
-        // Save timing-based detection setting
-        persistedObject.setBoolean("timingBasedDetectionEnabled", timingBasedDetectionEnabled);
+        api.logging().logToOutput("DEBUG saveSettings: Saved attack mode to persistence: " + attackMode);
         
         // Save headers
         persistedObject.setString("headers", String.join(",", headers));
@@ -381,9 +373,6 @@ public class BurpHeaderBanger implements BurpExtension {
     public int getSqliSleepTime() { return sqliSleepTime; }
     public void setSqliSleepTime(int sqliSleepTime) { this.sqliSleepTime = sqliSleepTime; }
 
-    public boolean isTimingBasedDetectionEnabled() { return timingBasedDetectionEnabled; }
-    public void setTimingBasedDetectionEnabled(boolean timingBasedDetectionEnabled) { this.timingBasedDetectionEnabled = timingBasedDetectionEnabled; }
-
     public List<String> getHeaders() { return headers; }
     public void setHeaders(List<String> headers) { this.headers = headers; }
 
@@ -425,7 +414,6 @@ public class BurpHeaderBanger implements BurpExtension {
     public List<Exclusion> getDefaultExclusions() { return new ArrayList<>(DEFAULT_EXCLUSIONS); }
 
     public Map<String, Long> getRequestTimestamps() { return requestTimestamps; }
-    public Map<String, PayloadCorrelation> getPayloadMap() { return payloadMap; }
     
     // Exclusion methods
     public boolean isExcluded(String url, String host) {
@@ -494,6 +482,35 @@ public class BurpHeaderBanger implements BurpExtension {
         // Escape special regex characters in URL
         String regexPattern = url.replace(".", "\\.").replace("?", "\\?").replace("*", "\\*").replace("+", "\\+").replace("[", "\\[").replace("]", "\\]").replace("(", "\\(").replace(")", "\\)").replace("{", "\\{").replace("}", "\\}").replace("^", "\\^").replace("$", "\\$").replace("|", "\\|");
         addExclusion(regexPattern);
+    }
+    
+    // 403 Alerts management methods
+    public List<Alert403Entry> getAlert403Entries() {
+        return new ArrayList<>(alert403Entries);
+    }
+    
+    public void addAlert403Entry(Alert403Entry entry) {
+        alert403Entries.add(entry);
+        api.logging().logToOutput("[403_ALERT] Added 403 alert: " + entry.toString());
+        
+        // Notify UI to refresh the 403 alerts table
+        if (headerBangerTab != null) {
+            SwingUtilities.invokeLater(() -> {
+                headerBangerTab.refresh403AlertsTable();
+            });
+        }
+    }
+    
+    public void clearAlert403Entries() {
+        alert403Entries.clear();
+        api.logging().logToOutput("[403_ALERT] Cleared all 403 alerts");
+        
+        // Notify UI to refresh the 403 alerts table
+        if (headerBangerTab != null) {
+            SwingUtilities.invokeLater(() -> {
+                headerBangerTab.refresh403AlertsTable();
+            });
+        }
     }
 
     public void extractSqliSleepTime() {

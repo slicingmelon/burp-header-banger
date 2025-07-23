@@ -20,7 +20,6 @@ import javax.swing.*;
 import java.awt.*;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ScheduledExecutorService;
 
@@ -33,17 +32,14 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
     private final MontoyaApi api;
     private final ScheduledExecutorService scheduler;
     private final CollaboratorClient collaboratorClient;
-    private final Map<String, PayloadCorrelation> payloadMap;
     private final AuditIssueBuilder auditIssueCreator;
 
     public ScanCheck(BurpHeaderBanger extension, MontoyaApi api, ScheduledExecutorService scheduler,
-                    CollaboratorClient collaboratorClient, Map<String, PayloadCorrelation> payloadMap,
-                    AuditIssueBuilder auditIssueCreator) {
+                    CollaboratorClient collaboratorClient, AuditIssueBuilder auditIssueCreator) {
         this.extension = extension;
         this.api = api;
         this.scheduler = scheduler;
         this.collaboratorClient = collaboratorClient;
-        this.payloadMap = payloadMap;
         this.auditIssueCreator = auditIssueCreator;
     }
 
@@ -133,11 +129,7 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                                 String payloadDomain = collabPayload.toString();
                                 finalPayload = hostValue + extension.getBxssPayload().replace("{{collaborator}}", payloadDomain);
                                 
-                                // Store correlation for collaborator tracking
-                                PayloadCorrelation correlation = new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method());
-                                payloadMap.put(payloadDomain, correlation);
-                                
-                                api.logging().logToOutput("Context menu: Added payload to map: " + payloadDomain + " -> " + sensitiveHeader);
+                                api.logging().logToOutput("Context menu: Using collaborator payload for sensitive header: " + sensitiveHeader + " with domain: " + payloadDomain);
                             } else {
                                 // Custom payload without collaborator - no tracking needed
                                 finalPayload = hostValue + extension.getBxssPayload();
@@ -163,9 +155,21 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                         HttpRequest finalRequest = originalRequest.withUpdatedHeaders(addOrReplaceHeaders(modifiedHeaders, extension.getExtraHeaders()));
                         
                         api.logging().logToOutput("Context menu: Sending request with " + extension.getSensitiveHeaders().size() + " sensitive headers");
-                        api.logging().logToOutput("Context menu: Total payloads in map: " + payloadMap.size());
                         
-                        api.http().sendRequest(finalRequest);
+                        var response = api.http().sendRequest(finalRequest);
+                        
+                        // Check for 403 status code in context menu BXSS scan
+                        if (response.response() != null && response.response().statusCode() == 403) {
+                            String method = finalRequest.method();
+                            String requestHost = finalRequest.httpService().host();
+                            String pathQuery = finalRequest.path();
+                            
+                            Alert403Entry entry = new Alert403Entry(method, requestHost, pathQuery, 403, "Extensions", response);
+                            extension.addAlert403Entry(entry);
+                            
+                            api.logging().logToOutput("[403_DETECTED] Context menu BXSS scan returned 403: " + method + " " + requestHost + pathQuery);
+                        }
+                        
                         api.logging().logToOutput("Context menu scan: Sent BXSS probes for sensitive headers for URL: " + originalRequest.url());
                         return;
                     }
@@ -191,6 +195,18 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                         HttpRequestResponse response = api.http().sendRequest(modifiedRequest);
                         long endTime = System.currentTimeMillis();
                         long responseTime = endTime - startTime;
+                        
+                        // Check for 403 status code in context menu SQL injection scan
+                        if (response.response() != null && response.response().statusCode() == 403) {
+                            String method = modifiedRequest.method();
+                            String requestHost = modifiedRequest.httpService().host();
+                            String pathQuery = modifiedRequest.path();
+                            
+                            Alert403Entry entry = new Alert403Entry(method, requestHost, pathQuery, 403, "Extensions", response);
+                            extension.addAlert403Entry(entry);
+                            
+                            api.logging().logToOutput("[403_DETECTED] Context menu SQL injection scan returned 403: " + method + " " + requestHost + pathQuery);
+                        }
                         
                         if (responseTime >= extension.getSqliSleepTime() * 1000) {
                             api.logging().logToOutput("Context menu scan: Possible Blind SQL Injection detected! Response time: " + responseTime + " ms at URL: " + originalRequest.url());
