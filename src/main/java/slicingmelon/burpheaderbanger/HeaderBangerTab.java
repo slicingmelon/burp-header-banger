@@ -445,7 +445,6 @@ public class HeaderBangerTab {
     private JPanel createExclusionsPanel() {
         JPanel panel = new JPanel(new BorderLayout());
 
-        // Create table model
         exclusionsTableModel = new DefaultTableModel(new String[]{"Enabled", "Regex Pattern"}, 0) {
             @Override
             public Class<?> getColumnClass(int columnIndex) {
@@ -481,7 +480,6 @@ public class HeaderBangerTab {
             }
         });
 
-        // Add change listener to update exclusions when table changes
         exclusionsTableModel.addTableModelListener(_ -> {
             updateExclusionsFromTable();
         });
@@ -670,8 +668,6 @@ public class HeaderBangerTab {
         JOptionPane.showMessageDialog(null, "Blind XSS payload reset to default!", "Success", JOptionPane.INFORMATION_MESSAGE);
     }
 
-
-    
     // Exclusion management methods
     private void updateExclusionsFromTable() {
         extension.getExclusions().clear();
@@ -679,7 +675,6 @@ public class HeaderBangerTab {
             boolean enabled = (Boolean) exclusionsTableModel.getValueAt(i, 0);
             String pattern = (String) exclusionsTableModel.getValueAt(i, 1);
             if (pattern != null && !pattern.trim().isEmpty()) {
-                // All patterns are treated as regex now
                 extension.getExclusions().add(new Exclusion(enabled, pattern.trim()));
             }
         }
@@ -688,14 +683,12 @@ public class HeaderBangerTab {
     
     private void addExclusion() {
         exclusionsTableModel.addRow(new Object[]{true, ""});
-        // Don't call refreshExclusionsTable() here - it will cause infinite loop with the table listener
     }
     
     private void deleteExclusion() {
         int selectedRow = exclusionsTable.getSelectedRow();
         if (selectedRow >= 0) {
             exclusionsTableModel.removeRow(selectedRow);
-            // Don't call refreshExclusionsTable() here - the table listener will handle it
         }
     }
     
@@ -713,7 +706,6 @@ public class HeaderBangerTab {
     }
 
     public void refreshExclusionsTable() {
-        // Temporarily remove the table model listener to prevent infinite loops
         javax.swing.event.TableModelListener[] listeners = exclusionsTableModel.getTableModelListeners();
         for (javax.swing.event.TableModelListener listener : listeners) {
             exclusionsTableModel.removeTableModelListener(listener);
@@ -730,7 +722,6 @@ public class HeaderBangerTab {
             api.logging().logToOutput("[HeaderBangerTab] Added row to table: " + exclusion.getPattern());
         }
         
-        // Re-add the table model listeners
         for (javax.swing.event.TableModelListener listener : listeners) {
             exclusionsTableModel.addTableModelListener(listener);
         }
@@ -753,7 +744,6 @@ public class HeaderBangerTab {
         
         if (exclusionsTableModel != null && exclusionsTable != null) {
             SwingUtilities.invokeLater(() -> {
-                // Check if this exclusion already exists in the table
                 boolean exists = false;
                 for (int i = 0; i < exclusionsTableModel.getRowCount(); i++) {
                     String existingPattern = (String) exclusionsTableModel.getValueAt(i, 1);
@@ -769,7 +759,6 @@ public class HeaderBangerTab {
                         exclusion.getPattern()
                     });
                     
-                    // Force table update
                     exclusionsTable.revalidate();
                     exclusionsTable.repaint();
                     exclusionsTableModel.fireTableDataChanged();
