@@ -36,7 +36,6 @@ public class BurpHeaderBanger implements BurpExtension {
     private boolean onlyInScopeItems = false;
     private int attackMode = 2; // 1 = Blind SQLi, 2 = Blind XSS
     private int sqliSleepTime = DEFAULT_SQLI_SLEEP_TIME;
-    private boolean timingBasedDetectionEnabled = true; // Timing measurement excludes intercept delays for accuracy
     
     // Headers and payloads
     private List<String> headers = new ArrayList<>();
@@ -230,11 +229,6 @@ public class BurpHeaderBanger implements BurpExtension {
             api.logging().logToOutput("DEBUG loadSettings: No attack mode in persistence, using default: " + attackMode);
         }
         
-        // Load timing-based detection setting
-        if (persistedObject.getBoolean("timingBasedDetectionEnabled") != null) {
-            timingBasedDetectionEnabled = persistedObject.getBoolean("timingBasedDetectionEnabled");
-        }
-        
         // Load headers
         String headersJson = persistedObject.getString("headers");
         if (headersJson != null && !headersJson.isEmpty()) {
@@ -328,9 +322,6 @@ public class BurpHeaderBanger implements BurpExtension {
         persistedObject.setInteger("attackMode", attackMode);
         api.logging().logToOutput("DEBUG saveSettings: Saved attack mode to persistence: " + attackMode);
         
-        // Save timing-based detection setting
-        persistedObject.setBoolean("timingBasedDetectionEnabled", timingBasedDetectionEnabled);
-        
         // Save headers
         persistedObject.setString("headers", String.join(",", headers));
         
@@ -378,9 +369,6 @@ public class BurpHeaderBanger implements BurpExtension {
 
     public int getSqliSleepTime() { return sqliSleepTime; }
     public void setSqliSleepTime(int sqliSleepTime) { this.sqliSleepTime = sqliSleepTime; }
-
-    public boolean isTimingBasedDetectionEnabled() { return timingBasedDetectionEnabled; }
-    public void setTimingBasedDetectionEnabled(boolean timingBasedDetectionEnabled) { this.timingBasedDetectionEnabled = timingBasedDetectionEnabled; }
 
     public List<String> getHeaders() { return headers; }
     public void setHeaders(List<String> headers) { this.headers = headers; }

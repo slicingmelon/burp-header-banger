@@ -17,7 +17,6 @@ public class HeaderBangerTab {
     private JTabbedPane tabbedPane;
     private JCheckBox activeCheckBox;
     private JCheckBox onlyInScopeCheckBox;
-    private JCheckBox timingBasedDetectionCheckBox;
 
     private JButton sqliButton;
     private JButton xssButton;
@@ -78,14 +77,6 @@ public class HeaderBangerTab {
             api.logging().logToOutput("Only in scope items is now " + (extension.isOnlyInScopeItems() ? "enabled" : "disabled"));
         });
         activePanel.add(onlyInScopeCheckBox);
-        
-        timingBasedDetectionCheckBox = new JCheckBox("Timing-based detection (excludes intercept delays)", extension.isTimingBasedDetectionEnabled());
-        timingBasedDetectionCheckBox.addItemListener(e -> {
-            extension.setTimingBasedDetectionEnabled(e.getStateChange() == ItemEvent.SELECTED);
-            extension.saveSettings();
-            api.logging().logToOutput("Timing-based detection is now " + (extension.isTimingBasedDetectionEnabled() ? "enabled" : "disabled"));
-        });
-        activePanel.add(timingBasedDetectionCheckBox);
         
         // Attack mode panel
         JPanel attackModePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));

@@ -96,7 +96,7 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
         }
         
         // Store timestamp for SQL injection timing detection (excludes intercept delays)
-        if (extension.getAttackMode() == 1 && extension.isTimingBasedDetectionEnabled()) {
+        if (extension.getAttackMode() == 1) {
             String requestKey = interceptedRequest.url();
             requestTimestamps.put(requestKey, System.currentTimeMillis());
             api.logging().logToOutput("Stored timestamp for SQL injection timing: " + requestKey);
@@ -264,12 +264,6 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
     }
 
     private void processResponseForSqli(InterceptedResponse interceptedResponse) {
-        // Check if timing-based detection is disabled
-        if (!extension.isTimingBasedDetectionEnabled()) {
-            api.logging().logToOutput("Timing-based SQL injection detection is disabled");
-            return;
-        }
-        
         // Check content type
         String contentType = getHeaderValue(interceptedResponse.headers(), "Content-Type");
         if (contentType != null) {
@@ -349,8 +343,8 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             
             api.logging().logToOutput("Sensitive headers scan - Response time: " + responseTime + " ms (manual timing)");
             
-            // Only check timing if timing-based detection is enabled and in SQL injection mode
-            if (extension.getAttackMode() == 1 && extension.isTimingBasedDetectionEnabled() && 
+            // Only check timing if in SQL injection mode
+            if (extension.getAttackMode() == 1 && 
                 responseTime >= extension.getSqliSleepTime() * 1000) {
                 api.logging().logToOutput("TIMING-BASED SQL INJECTION DETECTED in sensitive headers (Server response time: " + responseTime + " ms)");
                 auditIssueCreator.createSensitiveHeaderSqlIssue(response, responseTime);
