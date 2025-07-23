@@ -711,7 +711,7 @@ public class HeaderBangerTab {
             String pattern = (String) exclusionsTableModel.getValueAt(i, 1);
             if (pattern != null && !pattern.trim().isEmpty()) {
                 // All patterns are treated as regex now
-                extension.getExclusions().add(new Exclusion(enabled, pattern.trim(), true));
+                extension.getExclusions().add(new Exclusion(enabled, pattern.trim()));
             }
         }
         extension.saveSettings();

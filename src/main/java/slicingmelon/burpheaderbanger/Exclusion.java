@@ -5,18 +5,16 @@ import java.util.regex.Pattern;
 public class Exclusion {
     private boolean enabled;
     private String pattern;
-    private boolean isRegex;
     private transient Pattern compiledPattern;
     
-    public Exclusion(boolean enabled, String pattern, boolean isRegex) {
+    public Exclusion(boolean enabled, String pattern) {
         this.enabled = enabled;
         this.pattern = pattern;
-        this.isRegex = isRegex;
         compilePattern();
     }
     
     public Exclusion() {
-        this(true, "", false);
+        this(true, "");
     }
     
     public boolean isEnabled() {
@@ -36,17 +34,8 @@ public class Exclusion {
         compilePattern();
     }
     
-    public boolean isRegex() {
-        return isRegex;
-    }
-    
-    public void setRegex(boolean isRegex) {
-        this.isRegex = isRegex;
-        compilePattern();
-    }
-    
     private void compilePattern() {
-        if (isRegex && pattern != null && !pattern.isEmpty()) {
+        if (pattern != null && !pattern.isEmpty()) {
             try {
                 this.compiledPattern = Pattern.compile(pattern);
             } catch (Exception e) {
@@ -62,26 +51,21 @@ public class Exclusion {
             return false;
         }
         
-        if (isRegex) {
-            if (compiledPattern == null) {
-                return false;
-            }
-            return compiledPattern.matcher(input).find();
-        } else {
-            // This shouldn't be used anymore since we only support regex
-            return input.equals(pattern) || input.contains(pattern);
+        if (compiledPattern == null) {
+            return false;
         }
+        return compiledPattern.matcher(input).find();
     }
     
     @Override
     public String toString() {
-        return (enabled ? "ENABLED" : "DISABLED") + " " + pattern + (isRegex ? " (regex)" : "");
+        return (enabled ? "ENABLED" : "DISABLED") + " " + pattern + " (regex)";
     }
     
     // For JSON serialization
     public String toJson() {
-        return String.format("{\"enabled\":%s,\"pattern\":\"%s\",\"isRegex\":%s}", 
-                enabled, pattern.replace("\"", "\\\""), isRegex);
+        return String.format("{\"enabled\":%s,\"pattern\":\"%s\"}", 
+                enabled, pattern.replace("\"", "\\\""));
     }
     
     // For JSON deserialization
@@ -94,7 +78,6 @@ public class Exclusion {
             
             boolean enabled = true;
             String pattern = "";
-            boolean isRegex = false;
             
             String[] parts = json.split(",");
             for (String part : parts) {
@@ -103,12 +86,10 @@ public class Exclusion {
                     enabled = Boolean.parseBoolean(part.substring(10));
                 } else if (part.startsWith("\"pattern\":\"")) {
                     pattern = part.substring(11, part.length() - 1).replace("\\\"", "\"");
-                } else if (part.startsWith("\"isRegex\":")) {
-                    isRegex = Boolean.parseBoolean(part.substring(10));
                 }
             }
             
-            return new Exclusion(enabled, pattern, isRegex);
+            return new Exclusion(enabled, pattern);
         } catch (Exception e) {
             return new Exclusion();
         }

