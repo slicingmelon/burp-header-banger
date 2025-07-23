@@ -70,6 +70,8 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
     @Override
     public List<Component> provideMenuItems(ContextMenuEvent event) {
         api.logging().logToOutput("[CONTEXT_MENU] Menu items requested, event type: " + event.getClass().getSimpleName());
+        api.logging().logToOutput("[CONTEXT_MENU] Selected request responses count: " + event.selectedRequestResponses().size());
+        api.logging().logToOutput("[CONTEXT_MENU] Message editor request present: " + (event.messageEditorRequestResponse().isPresent()));
         
         List<Component> menuItems = new ArrayList<>();
         
@@ -100,7 +102,7 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
             }
             api.logging().logToOutput("Context menu scan initiated for: " + url);
             
-            // Create a simplified sensitive headers scan for context menu
+            // Create a simplified sensitive headers scan for context menu  
             scheduler.execute(() -> {
                 HttpRequest originalRequest = selectedMessage.get().request();
                 String hostValue = getHeaderValue(originalRequest.headers(), "Host");
@@ -110,7 +112,7 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                         api.logging().logToOutput("Context menu: Processing BXSS for sensitive headers");
                         
                         // BXSS logic for context menu
-                        List<HttpHeader> modifiedHeaders = new ArrayList<>(originalRequest.headers());
+                        List<HttpHeader> modifiedHeaders = new ArrayList<>(finalOriginalRequest.headers());
                         
                         for (String sensitiveHeader : extension.getSensitiveHeaders()) {
                             String finalPayload;
@@ -123,7 +125,7 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                                 finalPayload = hostValue + extension.getBxssPayload().replace("{{collaborator}}", payloadDomain);
                                 
                                 // Store correlation for collaborator tracking
-                                PayloadCorrelation correlation = new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method());
+                                PayloadCorrelation correlation = new PayloadCorrelation(finalOriginalRequest.url(), sensitiveHeader, finalOriginalRequest.method());
                                 payloadMap.put(payloadDomain, correlation);
                                 
                                 api.logging().logToOutput("Context menu: Added payload to map: " + payloadDomain + " -> " + sensitiveHeader);
@@ -149,13 +151,13 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                         }
                         
                         // Add extra headers
-                        HttpRequest finalRequest = originalRequest.withUpdatedHeaders(addOrReplaceHeaders(modifiedHeaders, extension.getExtraHeaders()));
+                        HttpRequest finalRequest = finalOriginalRequest.withUpdatedHeaders(addOrReplaceHeaders(modifiedHeaders, extension.getExtraHeaders()));
                         
                         api.logging().logToOutput("Context menu: Sending request with " + extension.getSensitiveHeaders().size() + " sensitive headers");
                         api.logging().logToOutput("Context menu: Total payloads in map: " + payloadMap.size());
                         
                         api.http().sendRequest(finalRequest);
-                        api.logging().logToOutput("Context menu scan: Sent BXSS probes for sensitive headers for URL: " + originalRequest.url());
+                        api.logging().logToOutput("Context menu scan: Sent BXSS probes for sensitive headers for URL: " + finalOriginalRequest.url());
                         return;
                     }
 
@@ -172,8 +174,8 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                     
                     headersToAdd.addAll(extension.getExtraHeaders());
                     
-                    List<HttpHeader> newHeaders = addOrReplaceHeaders(originalRequest.headers(), headersToAdd);
-                    HttpRequest modifiedRequest = originalRequest.withUpdatedHeaders(newHeaders);
+                    List<HttpHeader> newHeaders = addOrReplaceHeaders(finalOriginalRequest.headers(), headersToAdd);
+                    HttpRequest modifiedRequest = finalOriginalRequest.withUpdatedHeaders(newHeaders);
                     
                     try {
                         long startTime = System.currentTimeMillis();
@@ -182,10 +184,10 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                         long responseTime = endTime - startTime;
                         
                         if (responseTime >= extension.getSqliSleepTime() * 1000) {
-                            api.logging().logToOutput("Context menu scan: Possible Blind SQL Injection detected! Response time: " + responseTime + " ms at URL: " + originalRequest.url());
+                            api.logging().logToOutput("Context menu scan: Possible Blind SQL Injection detected! Response time: " + responseTime + " ms at URL: " + finalOriginalRequest.url());
                             auditIssueCreator.createSensitiveHeaderSqlIssue(response, responseTime);
                         } else {
-                            api.logging().logToOutput("Context menu scan: Request completed in " + responseTime + " ms for URL: " + originalRequest.url());
+                            api.logging().logToOutput("Context menu scan: Request completed in " + responseTime + " ms for URL: " + finalOriginalRequest.url());
                         }
                     } catch (Exception e) {
                         api.logging().logToError("Error in context menu scan: " + e.getMessage());
@@ -199,11 +201,25 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
 
     private void excludeHostFromScans(ContextMenuEvent event) {
         api.logging().logToOutput("[CONTEXT_MENU] Exclude host action triggered");
+        
+        String host = null;
+        String url = null;
+        
+        // Try to get the request from selected items first (proxy history)
         Optional<HttpRequestResponse> selectedMessage = event.selectedRequestResponses().stream().findFirst();
         if (selectedMessage.isPresent()) {
-            String host = selectedMessage.get().request().httpService().host();
-            String url = selectedMessage.get().request().url();
-            
+            host = selectedMessage.get().request().httpService().host();
+            url = selectedMessage.get().request().url();
+            api.logging().logToOutput("[CONTEXT_MENU] Got request from selected items");
+        } else if (event.messageEditorRequestResponse().isPresent()) {
+            // Try to get from message editor (request/response view)
+            var messageEditorReqResp = event.messageEditorRequestResponse().get();
+            host = messageEditorReqResp.requestResponse().request().httpService().host();
+            url = messageEditorReqResp.requestResponse().request().url();
+            api.logging().logToOutput("[CONTEXT_MENU] Got request from message editor");
+        }
+        
+        if (host != null && url != null) {
             api.logging().logToOutput("[CONTEXT_MENU] Attempting to exclude host: " + host + " from URL: " + url);
             
             // Check if host is already excluded
@@ -219,17 +235,31 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                 extension.getHeaderBangerTab().refreshExclusionsTable();
             }
         } else {
-            api.logging().logToOutput("[CONTEXT_MENU] No request selected");
+            api.logging().logToOutput("[CONTEXT_MENU] No request found in either selected items or message editor");
         }
     }
     
     private void excludeUrlFromScans(ContextMenuEvent event) {
         api.logging().logToOutput("[CONTEXT_MENU] Exclude URL action triggered");
+        
+        String host = null;
+        String url = null;
+        
+        // Try to get the request from selected items first (proxy history)
         Optional<HttpRequestResponse> selectedMessage = event.selectedRequestResponses().stream().findFirst();
         if (selectedMessage.isPresent()) {
-            String url = selectedMessage.get().request().url();
-            String host = selectedMessage.get().request().httpService().host();
-            
+            host = selectedMessage.get().request().httpService().host();
+            url = selectedMessage.get().request().url();
+            api.logging().logToOutput("[CONTEXT_MENU] Got request from selected items");
+        } else if (event.messageEditorRequestResponse().isPresent()) {
+            // Try to get from message editor (request/response view)
+            var messageEditorReqResp = event.messageEditorRequestResponse().get();
+            host = messageEditorReqResp.requestResponse().request().httpService().host();
+            url = messageEditorReqResp.requestResponse().request().url();
+            api.logging().logToOutput("[CONTEXT_MENU] Got request from message editor");
+        }
+        
+        if (host != null && url != null) {
             api.logging().logToOutput("[CONTEXT_MENU] Attempting to exclude URL: " + url + " from host: " + host);
             
             // Check if URL is already excluded
@@ -245,7 +275,7 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                 extension.getHeaderBangerTab().refreshExclusionsTable();
             }
         } else {
-            api.logging().logToOutput("[CONTEXT_MENU] No request selected");
+            api.logging().logToOutput("[CONTEXT_MENU] No request found in either selected items or message editor");
         }
     }
 
