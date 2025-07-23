@@ -16,7 +16,6 @@ import burp.api.montoya.proxy.http.ProxyResponseToBeSentAction;
 
 import java.util.*;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
     private final BurpHeaderBanger extension;

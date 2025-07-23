@@ -4,13 +4,11 @@ import burp.api.montoya.MontoyaApi;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
-import javax.swing.table.TableCellEditor;
-import javax.swing.table.TableCellRenderer;
 import java.awt.*;
 import java.awt.event.ItemEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.util.Optional;
+
 
 public class HeaderBangerTab {
     private final BurpHeaderBanger extension;
@@ -484,7 +482,7 @@ public class HeaderBangerTab {
         });
 
         // Add change listener to update exclusions when table changes
-        exclusionsTableModel.addTableModelListener(e -> {
+        exclusionsTableModel.addTableModelListener(_ -> {
             updateExclusionsFromTable();
         });
 
