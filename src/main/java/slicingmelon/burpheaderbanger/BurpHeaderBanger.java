@@ -72,7 +72,7 @@ public class BurpHeaderBanger implements BurpExtension {
     
     private static final List<String> DEFAULT_SENSITIVE_HEADERS = Arrays.asList(
             "X-Host", "X-Forwarded-Host", "X-Forwarded-Server",
-            "X-HTTP-Host-Override", "Origin"
+            "X-HTTP-Host-Override"
     );
     
     // Default exclusions (regex patterns)
