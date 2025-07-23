@@ -54,9 +54,6 @@ public class BurpHeaderBanger implements BurpExtension {
     // Request timing tracking
     private final Map<String, Long> requestTimestamps = new ConcurrentHashMap<>();
     
-    // Payload tracking for XSS detection
-    private final Map<String, PayloadCorrelation> payloadMap = new ConcurrentHashMap<>();
-    
     // Default headers
     private static final List<String> DEFAULT_HEADERS = Arrays.asList(
             "User-Agent",
@@ -100,8 +97,8 @@ public class BurpHeaderBanger implements BurpExtension {
         
         // Create helper classes
         AuditIssueBuilder auditIssueCreator = new AuditIssueBuilder(this, api);
-        ProxyHandler proxyHandler = new ProxyHandler(this, api, auditIssueCreator, scheduler, collaboratorClient, payloadMap, requestTimestamps);
-        ScanCheck scanCheck = new ScanCheck(this, api, scheduler, collaboratorClient, payloadMap, auditIssueCreator);
+        ProxyHandler proxyHandler = new ProxyHandler(this, api, auditIssueCreator, scheduler, collaboratorClient, requestTimestamps);
+        ScanCheck scanCheck = new ScanCheck(this, api, scheduler, collaboratorClient, auditIssueCreator);
         
         // Create and register UI *before* loading settings that might affect it
         headerBangerTab = new HeaderBangerTab(this, api);
@@ -148,26 +145,27 @@ public class BurpHeaderBanger implements BurpExtension {
                         );
                         
                         if (!proxyHistory.isEmpty()) {
-                            // Find the payload correlation data by searching for key containing interaction ID
-                            PayloadCorrelation correlation = null;
-                            String correlationKey = null;
+                            // Extract context directly from the proxy history entry
+                            var requestResponse = proxyHistory.get(0); // Take the first match
+                            var request = requestResponse.finalRequest();
                             
-                            for (String key : payloadMap.keySet()) {
-                                if (key.contains(interactionId)) {
-                                    correlation = payloadMap.get(key);
-                                    correlationKey = key;
+                            // Find which header contains the interaction ID
+                            String headerName = null;
+                            for (var header : request.headers()) {
+                                if (header.value().contains(interactionId)) {
+                                    headerName = header.name();
                                     break;
                                 }
                             }
                             
-                            if (correlation != null) {
-                                api.logging().logToOutput("Found XSS interaction: " + interactionId + " for " + correlation.headerName);
-                                auditIssueCreator.createXssIssue(interaction, correlation);
+                            if (headerName != null) {
+                                api.logging().logToOutput("Found XSS interaction: " + interactionId + " for header " + headerName + " at " + request.url());
                                 
-                                // Remove from payload map to avoid duplicate issues
-                                payloadMap.remove(correlationKey);
+                                // Create a PayloadCorrelation object with the extracted data
+                                PayloadCorrelation correlation = new PayloadCorrelation(request.url(), headerName, request.method());
+                                auditIssueCreator.createXssIssue(interaction, correlation);
                             } else {
-                                api.logging().logToOutput("Interaction found but no correlation data: " + interactionId);
+                                api.logging().logToOutput("Interaction found but couldn't determine which header contained it: " + interactionId);
                             }
                         } else {
                             api.logging().logToOutput("Interaction found but no matching request in proxy history: " + interactionId);
@@ -421,7 +419,6 @@ public class BurpHeaderBanger implements BurpExtension {
     public List<Exclusion> getDefaultExclusions() { return new ArrayList<>(DEFAULT_EXCLUSIONS); }
 
     public Map<String, Long> getRequestTimestamps() { return requestTimestamps; }
-    public Map<String, PayloadCorrelation> getPayloadMap() { return payloadMap; }
     
     // Exclusion methods
     public boolean isExcluded(String url, String host) {

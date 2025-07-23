@@ -23,19 +23,17 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
     private final AuditIssueBuilder auditIssueCreator;
     private final ScheduledExecutorService scheduler;
     private final CollaboratorClient collaboratorClient;
-    private final Map<String, PayloadCorrelation> payloadMap;
     private final Map<String, Long> requestTimestamps;
     private final String collaboratorServerLocation;
 
     public ProxyHandler(BurpHeaderBanger extension, MontoyaApi api, AuditIssueBuilder auditIssueCreator, 
                        ScheduledExecutorService scheduler, CollaboratorClient collaboratorClient, 
-                       Map<String, PayloadCorrelation> payloadMap, Map<String, Long> requestTimestamps) {
+                       Map<String, Long> requestTimestamps) {
         this.extension = extension;
         this.api = api;
         this.auditIssueCreator = auditIssueCreator;
         this.scheduler = scheduler;
         this.collaboratorClient = collaboratorClient;
-        this.payloadMap = payloadMap;
         this.requestTimestamps = requestTimestamps;
         
         // Initialize collaborator server location
@@ -146,13 +144,12 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             api.logging().logToOutput("XSS - Processing header: " + headerName);
             
             String finalPayload;
-            String payloadDomain = null;
             
             // Check if payload uses collaborator tracking
             if (extension.getBxssPayload().contains("{{collaborator}}")) {
-                // Generate collaborator payload and do tracking
+                // Generate collaborator payload
                 CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
-                payloadDomain = collabPayload.toString();
+                String payloadDomain = collabPayload.toString();
                 String currentPayload = extension.getBxssPayload().replace("{{collaborator}}", payloadDomain);
                 
                 if ("User-Agent".equalsIgnoreCase(headerName)) {
@@ -176,11 +173,7 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
                     }
                 }
                 
-                // Create and store correlation for collaborator tracking
-                PayloadCorrelation correlation = new PayloadCorrelation(request.url(), headerName, request.method());
-                payloadMap.put(payloadDomain, correlation);
-                
-                api.logging().logToOutput("XSS - Added payload to map: " + payloadDomain + " -> " + headerName + " for " + request.url());
+                api.logging().logToOutput("XSS - Using collaborator payload for header: " + headerName + " with domain: " + payloadDomain);
             } else {
                 // Custom payload without collaborator - no tracking needed
                 String currentPayload = extension.getBxssPayload();
@@ -372,13 +365,12 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
             
             for (String sensitiveHeader : extension.getSensitiveHeaders()) {
                 String finalPayload;
-                String payloadDomain = null;
                 
                 // Check if payload uses collaborator tracking
                 if (extension.getBxssPayload().contains("{{collaborator}}")) {
                     // Generate collaborator payload and do tracking
                     CollaboratorPayload collabPayload = collaboratorClient.generatePayload();
-                    payloadDomain = collabPayload.toString();
+                    String payloadDomain = collabPayload.toString();
                     String currentPayload = extension.getBxssPayload().replace("{{collaborator}}", payloadDomain);
                     
                     if ("Origin".equalsIgnoreCase(sensitiveHeader)) {
@@ -399,11 +391,7 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
                         }
                     }
                     
-                    // Store correlation for collaborator tracking
-                    PayloadCorrelation correlation = new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method());
-                    payloadMap.put(payloadDomain, correlation);
-                    
-                    api.logging().logToOutput("XSS - Added sensitive header payload to map: " + payloadDomain + " -> " + sensitiveHeader);
+                    api.logging().logToOutput("XSS - Using collaborator payload for sensitive header: " + sensitiveHeader + " with domain: " + payloadDomain);
                 } else {
                     // Custom payload without collaborator - no tracking needed
                     String currentPayload = extension.getBxssPayload();

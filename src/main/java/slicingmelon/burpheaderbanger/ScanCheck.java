@@ -33,17 +33,14 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
     private final MontoyaApi api;
     private final ScheduledExecutorService scheduler;
     private final CollaboratorClient collaboratorClient;
-    private final Map<String, PayloadCorrelation> payloadMap;
     private final AuditIssueBuilder auditIssueCreator;
 
     public ScanCheck(BurpHeaderBanger extension, MontoyaApi api, ScheduledExecutorService scheduler,
-                    CollaboratorClient collaboratorClient, Map<String, PayloadCorrelation> payloadMap,
-                    AuditIssueBuilder auditIssueCreator) {
+                    CollaboratorClient collaboratorClient, AuditIssueBuilder auditIssueCreator) {
         this.extension = extension;
         this.api = api;
         this.scheduler = scheduler;
         this.collaboratorClient = collaboratorClient;
-        this.payloadMap = payloadMap;
         this.auditIssueCreator = auditIssueCreator;
     }
 
@@ -133,11 +130,7 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                                 String payloadDomain = collabPayload.toString();
                                 finalPayload = hostValue + extension.getBxssPayload().replace("{{collaborator}}", payloadDomain);
                                 
-                                // Store correlation for collaborator tracking
-                                PayloadCorrelation correlation = new PayloadCorrelation(originalRequest.url(), sensitiveHeader, originalRequest.method());
-                                payloadMap.put(payloadDomain, correlation);
-                                
-                                api.logging().logToOutput("Context menu: Added payload to map: " + payloadDomain + " -> " + sensitiveHeader);
+                                api.logging().logToOutput("Context menu: Using collaborator payload for sensitive header: " + sensitiveHeader + " with domain: " + payloadDomain);
                             } else {
                                 // Custom payload without collaborator - no tracking needed
                                 finalPayload = hostValue + extension.getBxssPayload();
@@ -163,7 +156,6 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                         HttpRequest finalRequest = originalRequest.withUpdatedHeaders(addOrReplaceHeaders(modifiedHeaders, extension.getExtraHeaders()));
                         
                         api.logging().logToOutput("Context menu: Sending request with " + extension.getSensitiveHeaders().size() + " sensitive headers");
-                        api.logging().logToOutput("Context menu: Total payloads in map: " + payloadMap.size());
                         
                         api.http().sendRequest(finalRequest);
                         api.logging().logToOutput("Context menu scan: Sent BXSS probes for sensitive headers for URL: " + originalRequest.url());
