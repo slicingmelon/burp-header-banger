@@ -58,7 +58,7 @@ public class Exclusion {
     }
     
     public boolean matches(String input) {
-        if (!enabled || pattern == null || pattern.isEmpty()) {
+        if (!enabled || pattern == null || pattern.isEmpty() || input == null) {
             return false;
         }
         
@@ -68,13 +68,14 @@ public class Exclusion {
             }
             return compiledPattern.matcher(input).find();
         } else {
-            return input.contains(pattern);
+            // This shouldn't be used anymore since we only support regex
+            return input.equals(pattern) || input.contains(pattern);
         }
     }
     
     @Override
     public String toString() {
-        return (enabled ? "✓" : "✗") + " " + pattern + (isRegex ? " (regex)" : "");
+        return (enabled ? "ENABLED" : "DISABLED") + " " + pattern + (isRegex ? " (regex)" : "");
     }
     
     // For JSON serialization

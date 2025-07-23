@@ -11,6 +11,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.regex.Pattern;
 
 public class BurpHeaderBanger implements BurpExtension {
 
@@ -116,8 +117,8 @@ public class BurpHeaderBanger implements BurpExtension {
         // Load settings now that the UI is available
         loadSettings();
         
-        // Explicitly refresh the table in the UI to show the loaded exclusions
-        headerBangerTab.refreshExclusionsTable();
+        // Explicitly refresh all UI lists to show the loaded data
+        headerBangerTab.refreshAllLists();
         
         // Register handlers
         api.proxy().registerRequestHandler(proxyHandler);
@@ -280,9 +281,10 @@ public class BurpHeaderBanger implements BurpExtension {
             // Migrate from old skipHosts or use defaults
             exclusions = new ArrayList<>();
             if (!skipHosts.isEmpty()) {
-                // Migrate from old skipHosts format
+                // Migrate from old skipHosts format to regex patterns
                 for (String host : skipHosts) {
-                    exclusions.add(new Exclusion(true, host, false));
+                    String regexPattern = host.replace(".", "\\.");
+                    exclusions.add(new Exclusion(true, regexPattern, true));
                 }
             } else {
                 // Use default exclusions
@@ -431,6 +433,7 @@ public class BurpHeaderBanger implements BurpExtension {
     public boolean isExcluded(String url, String host) {
         for (Exclusion exclusion : exclusions) {
             if (exclusion.matches(url) || exclusion.matches(host)) {
+                api.logging().logToOutput("[EXCLUSION] Request excluded by pattern: " + exclusion.getPattern());
                 return true;
             }
         }
@@ -445,18 +448,37 @@ public class BurpHeaderBanger implements BurpExtension {
                 return;
             }
         }
-        exclusions.add(new Exclusion(true, pattern, isRegex));
-        api.logging().logToOutput("Added exclusion: " + pattern + " (isRegex=" + isRegex + "). Exclusions now: " + exclusions);
+        
+        // Test the pattern compilation first
+        try {
+            if (isRegex) {
+                Pattern.compile(pattern);
+            }
+        } catch (Exception e) {
+            api.logging().logToError("[ERROR] Invalid regex pattern: " + pattern + " - " + e.getMessage());
+            return;
+        }
+        
+        Exclusion newExclusion = new Exclusion(true, pattern, isRegex);
+        exclusions.add(newExclusion);
+        api.logging().logToOutput("Added exclusion: " + pattern + " (regex=" + isRegex + "). Total exclusions: " + exclusions.size());
+        
         if (headerBangerTab != null) headerBangerTab.refreshExclusionsTable();
         saveSettings();
     }
     
     public void addHostExclusion(String host) {
-        addExclusion(host, false);
+        // Create a simple regex pattern that matches the host anywhere in the URL
+        // Escape dots in hostname for regex
+        String regexPattern = host.replace(".", "\\.");
+        addExclusion(regexPattern, true);
     }
     
     public void addUrlExclusion(String url) {
-        addExclusion(url, false);
+        // Create a regex pattern that matches the exact URL
+        // Escape special regex characters in URL
+        String regexPattern = url.replace(".", "\\.").replace("?", "\\?").replace("*", "\\*").replace("+", "\\+").replace("[", "\\[").replace("]", "\\]").replace("(", "\\(").replace(")", "\\)").replace("{", "\\{").replace("}", "\\}").replace("^", "\\^").replace("$", "\\$").replace("|", "\\|");
+        addExclusion(regexPattern, true);
     }
 
     public void extractSqliSleepTime() {

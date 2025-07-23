@@ -69,6 +69,8 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
 
     @Override
     public List<Component> provideMenuItems(ContextMenuEvent event) {
+        api.logging().logToOutput("[CONTEXT_MENU] Menu items requested, event type: " + event.getClass().getSimpleName());
+        
         List<Component> menuItems = new ArrayList<>();
         
         JMenuItem scanItem = new JMenuItem("Scan this request with Header Banger");
@@ -83,6 +85,7 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
         excludeUrlItem.addActionListener(_ -> excludeUrlFromScans(event));
         menuItems.add(excludeUrlItem);
         
+        api.logging().logToOutput("[CONTEXT_MENU] Returning " + menuItems.size() + " menu items");
         return menuItems;
     }
 
@@ -195,42 +198,54 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
     }
 
     private void excludeHostFromScans(ContextMenuEvent event) {
+        api.logging().logToOutput("[CONTEXT_MENU] Exclude host action triggered");
         Optional<HttpRequestResponse> selectedMessage = event.selectedRequestResponses().stream().findFirst();
         if (selectedMessage.isPresent()) {
             String host = selectedMessage.get().request().httpService().host();
             String url = selectedMessage.get().request().url();
             
+            api.logging().logToOutput("[CONTEXT_MENU] Attempting to exclude host: " + host + " from URL: " + url);
+            
             // Check if host is already excluded
             if (extension.isExcluded(url, host)) {
-                api.logging().logToOutput("Host " + host + " is already excluded");
+                api.logging().logToOutput("[CONTEXT_MENU] Host " + host + " is already excluded");
             } else {
+                api.logging().logToOutput("[CONTEXT_MENU] Adding host exclusion for: " + host);
                 extension.addHostExclusion(host);
                 extension.saveSettings();
-                api.logging().logToOutput("Host " + host + " added to the exclusion list");
+                api.logging().logToOutput("[CONTEXT_MENU] Host " + host + " added to the exclusion list");
                 
                 // Refresh the exclusions table in the UI
                 extension.getHeaderBangerTab().refreshExclusionsTable();
             }
+        } else {
+            api.logging().logToOutput("[CONTEXT_MENU] No request selected");
         }
     }
     
     private void excludeUrlFromScans(ContextMenuEvent event) {
+        api.logging().logToOutput("[CONTEXT_MENU] Exclude URL action triggered");
         Optional<HttpRequestResponse> selectedMessage = event.selectedRequestResponses().stream().findFirst();
         if (selectedMessage.isPresent()) {
             String url = selectedMessage.get().request().url();
             String host = selectedMessage.get().request().httpService().host();
             
+            api.logging().logToOutput("[CONTEXT_MENU] Attempting to exclude URL: " + url + " from host: " + host);
+            
             // Check if URL is already excluded
             if (extension.isExcluded(url, host)) {
-                api.logging().logToOutput("URL " + url + " is already excluded");
+                api.logging().logToOutput("[CONTEXT_MENU] URL " + url + " is already excluded");
             } else {
+                api.logging().logToOutput("[CONTEXT_MENU] Adding URL exclusion for: " + url);
                 extension.addUrlExclusion(url);
                 extension.saveSettings();
-                api.logging().logToOutput("URL " + url + " added to the exclusion list");
+                api.logging().logToOutput("[CONTEXT_MENU] URL " + url + " added to the exclusion list");
                 
                 // Refresh the exclusions table in the UI
                 extension.getHeaderBangerTab().refreshExclusionsTable();
             }
+        } else {
+            api.logging().logToOutput("[CONTEXT_MENU] No request selected");
         }
     }
 
