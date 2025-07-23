@@ -142,11 +142,15 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
 
     private HttpRequest modifyRequestHeaders(HttpRequest request) {
         // Only apply regular headers for proxy traffic
+        HttpRequest workingRequest;
         if (extension.getAttackMode() == 2) {
-            return applyHeadersWithPayload(request, extension.getHeaders(), extension.getBxssPayload(), false);
+            workingRequest = applyHeadersWithPayload(request, extension.getHeaders(), extension.getBxssPayload(), false);
         } else {
-            return applyHeadersWithPayload(request, extension.getHeaders(), extension.getSqliPayload(), false);
+            workingRequest = applyHeadersWithPayload(request, extension.getHeaders(), extension.getSqliPayload(), false);
         }
+        
+        // Add extra headers
+        return addExtraHeaders(workingRequest);
     }
 
     /**
@@ -231,30 +235,6 @@ public class ProxyHandler implements ProxyRequestHandler, ProxyResponseHandler {
                 return payload;
             }
         }
-    }
-
-    private HttpRequest injectUniqueXssPayloads(HttpRequest request) {
-        HttpRequest workingRequest = applyHeadersWithPayload(request, extension.getHeaders(), extension.getBxssPayload(), false);
-        
-        // Add extra headers
-        workingRequest = addExtraHeaders(workingRequest);
-        
-        // Debug: Show final request headers after all processing
-        api.logging().logToOutput("XSS - Final request headers (" + workingRequest.headers().size() + " total):");
-        for (HttpHeader header : workingRequest.headers()) {
-            api.logging().logToOutput("  " + header.name() + ": " + header.value());
-        }
-        
-        return workingRequest;
-    }
-    
-    private HttpRequest injectSqlInjectionPayloads(HttpRequest request) {
-        HttpRequest workingRequest = applyHeadersWithPayload(request, extension.getHeaders(), extension.getSqliPayload(), false);
-        
-        // Add extra headers
-        workingRequest = addExtraHeaders(workingRequest);
-        
-        return workingRequest;
     }
 
     /**
