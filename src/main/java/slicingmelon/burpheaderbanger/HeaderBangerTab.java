@@ -968,7 +968,7 @@ public class HeaderBangerTab {
                     StringBuilder excludedHosts = new StringBuilder();
                     
                     for (String host : uniqueHosts) {
-                        if (!extension.isExcluded("", host)) { // Check if not already excluded
+                        if (!extension.isExcluded("", host)) {
                             extension.addHostExclusion(host);
                             excludedCount++;
                             if (excludedHosts.length() > 0) excludedHosts.append(", ");
