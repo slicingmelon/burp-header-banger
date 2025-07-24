@@ -43,7 +43,6 @@ public class AuditIssueBuilder {
             List<Marker> requestMarkers = getRequestMarkersForSqli(interceptedResponse.initiatingRequest(), extension.getSqliPayload());
             List<Marker> responseMarkers = getResponseMarkers(evidenceRequestResponse, extension.getSqliPayload());
             
-            // Add markers to the evidence
             HttpRequestResponse markedEvidence = evidenceRequestResponse;
             if (!requestMarkers.isEmpty()) {
                 markedEvidence = markedEvidence.withRequestMarkers(requestMarkers);

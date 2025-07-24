@@ -188,9 +188,8 @@ public class HeaderBangerTab {
         
         headersSection.add(extraHeadersContainer);
         
-        // Add some spacing
         mainPanel.add(headersSection);
-        mainPanel.add(Box.createVerticalStrut(15)); // Add spacing between sections
+        mainPanel.add(Box.createVerticalStrut(15));
         
         // Payloads section (more prominent)
         JPanel payloadsSection = new JPanel(new GridLayout(1, 2, 20, 0));
@@ -208,9 +207,8 @@ public class HeaderBangerTab {
         payloadsSection.add(xssPanel);
         
         mainPanel.add(payloadsSection);
-        mainPanel.add(Box.createVerticalGlue()); // Push everything up
-        
-        // Add everything to the main panel
+        mainPanel.add(Box.createVerticalGlue());
+
         panel.add(mainPanel, BorderLayout.CENTER);
         
         return panel;
@@ -481,14 +479,12 @@ public class HeaderBangerTab {
             }
         };
 
-        // Load initial exclusions
         refreshExclusionsTable();
 
         exclusionsTable = new JTable(exclusionsTableModel);
         exclusionsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         exclusionsTable.setRowHeight(25);
 
-        // Add double-click editing
         exclusionsTable.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {

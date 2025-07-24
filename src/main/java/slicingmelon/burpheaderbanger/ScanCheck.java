@@ -180,7 +180,7 @@ public class ScanCheck implements ActiveScanCheck, PassiveScanCheck, ContextMenu
                     List<String> headersToAdd = new ArrayList<>();
                     
                     for (String sensitiveHeader : extension.getSensitiveHeaders()) {
-                        // SQL injection payloads might use collaborator for out-of-band attacks (LOAD_FILE, xp_cmdshell, etc.)
+                        // SQL injection payloads might use collaborator for out-of-band attacks
                         String currentPayload = extension.getSqliPayload();
                         headersToAdd.add(sensitiveHeader + ": " + hostValue + currentPayload);
                     }
